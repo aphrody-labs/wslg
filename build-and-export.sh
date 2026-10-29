@@ -31,8 +31,26 @@ MESA_VERSION=$(vendor_commit vendor/mesa)
 PULSEAUDIO_COMMIT=$(vendor_commit vendor/pulseaudio)
 WESTON_COMMIT=$(vendor_commit vendor/weston)
 
-echo "=== Building Docker image (WSLG_VERSION=$WSLG_VERSION WSLG_COMMIT=$WSLG_COMMIT) ==="
-docker build -f Dockerfile -t system-distro-x64 . \
+# BunOS: PulseAudio's git-version-gen needs a version, but .dockerignore keeps .git out of the
+# build context. Write its official tarball-version input from the vendor checkout (needs tags).
+if [ -d vendor/pulseaudio/.git ] && [ ! -s vendor/pulseaudio/.tarball-version ]; then
+    pa_version=$(git -C vendor/pulseaudio describe --tags --match 'v[0-9]*' --abbrev=5 2>/dev/null | sed 's/^v//' || true)
+    if [ -n "$pa_version" ]; then
+        printf '%s
+' "$pa_version" > vendor/pulseaudio/.tarball-version
+    else
+        echo "warning: no PulseAudio tag found; run: git -C vendor/pulseaudio fetch --tags --unshallow" >&2
+    fi
+fi
+
+# BunOS: BUILDER=docker (default) or podman. Podman needs --format docker for the Dockerfile
+# features used here and --network host when rootless.
+BUILDER=${BUILDER:-docker}
+BUILD_EXTRA=()
+if [ "$BUILDER" = podman ]; then BUILD_EXTRA=(--format docker --network host); fi
+
+echo "=== Building system distro image with $BUILDER (WSLG_VERSION=$WSLG_VERSION WSLG_COMMIT=$WSLG_COMMIT) ==="
+"$BUILDER" build "${BUILD_EXTRA[@]}" -f Dockerfile -t system-distro-x64 . \
     --build-arg WSLG_VERSION="$WSLG_VERSION" \
     --build-arg WSLG_COMMIT="$WSLG_COMMIT" \
     --build-arg WSLG_ARCH=x86_64 \
@@ -44,7 +62,7 @@ docker build -f Dockerfile -t system-distro-x64 . \
 
 echo ""
 echo "=== Exporting Docker container to tar ==="
-docker export $(docker create system-distro-x64) > system_x64.tar
+"$BUILDER" export "$("$BUILDER" create system-distro-x64)" > system_x64.tar
 
 echo ""
 echo "=== Converting tar to VHD ==="
