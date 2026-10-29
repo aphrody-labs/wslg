@@ -43,9 +43,11 @@ RUN . /opt/bunos/versions.env \
  && pacman -S --noconfirm --needed --asdeps $(bash /opt/bunos/deps/list.sh xorg-xwayland) \
  && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
  && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
- && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release \
-      -Dxvfb=false -Dxdmcp=false -Dsecure-rpc=false -Dxwayland_ei=false \
-      -Ddocs=false -Ddevel-docs=false -Ddocs-pdf=false \
+ && opts="" \
+ && for o in xvfb=false xdmcp=false secure-rpc=false xwayland_ei=false docs=false devel-docs=false docs-pdf=false; do \
+      grep -q "option('${o%%=*}'" xserver/meson_options.txt && opts="$opts -D$o"; done \
+ && echo "xserver meson options: $opts" \
+ && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release $opts \
  && ninja -C xserver/build install
 
 # ---------------------------------------------------------------- Weston
@@ -78,8 +80,7 @@ RUN . /opt/bunos/versions.env \
            && cmake --build "$1/build" -j"$(nproc)" && cmake --install "$1/build"; } \
  && clone hyprwayland-scanner "$HYPRWAYLAND_SCANNER_TAG" "$HYPRWAYLAND_SCANNER_SHA" && cm hyprwayland-scanner \
  && clone hyprland-protocols "$HYPRLAND_PROTOCOLS_TAG" "$HYPRLAND_PROTOCOLS_SHA" \
- && meson setup hyprland-protocols/build hyprland-protocols --prefix=/usr/local --libdir=lib \
- && ninja -C hyprland-protocols/build install \
+ && cm hyprland-protocols \
  && clone hyprutils "$HYPRUTILS_TAG" "$HYPRUTILS_SHA" && cm hyprutils \
  && clone hyprlang "$HYPRLANG_TAG" "$HYPRLANG_SHA" && cm hyprlang \
  && clone hyprcursor "$HYPRCURSOR_TAG" "$HYPRCURSOR_SHA" && cm hyprcursor \
