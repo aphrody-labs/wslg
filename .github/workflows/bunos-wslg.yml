@@ -87,7 +87,7 @@ jobs:
             awk -F'\t' '{gsub(/\|/,"/",$3); printf "| %s | %s | %s |\n",$1,$2,$3}' out/report.tsv
             echo
             echo "### versions"; echo '```'; cat out/versions.txt; echo '```'
-            for t in aquamarine-compat-weston16 checklist-weston16 checklist-hyprland; do
+            for t in aquamarine-compat-weston16 aquamarine-compat-weston16-gl checklist-weston16 checklist-weston16-gl checklist-hyprland; do
               [ -f "out/$t.tsv" ] && { echo "### $t (name, wanted, offered, verdict)"; echo '```'; cat "out/$t.tsv"; echo '```'; }
             done
           } >> "$GITHUB_STEP_SUMMARY"
