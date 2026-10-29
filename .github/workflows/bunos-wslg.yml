@@ -6,7 +6,8 @@ name: bunos-wslg
 #                 then headless protocol probes (wayland-info, xdpyinfo, weston-simple-shm,
 #                 hyprctl when a DRM render node exists).
 #   system-distro the stock WSLg Azure Linux recipe with this fork's patches; uploads the
-#                 filesystem tar and the VHD built by build-and-export.sh.
+#                 filesystem tar and the VHD built by build-and-export.sh. Runs on manual
+#                 dispatch, or on a push whose commit message contains "[distro]".
 
 on:
   push:
@@ -114,7 +115,7 @@ jobs:
 
   system-distro:
     needs: unit
-    if: github.event_name != 'workflow_dispatch' || inputs.system_distro
+    if: (github.event_name == 'workflow_dispatch' && inputs.system_distro) || contains(github.event.head_commit.message, '[distro]')
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:

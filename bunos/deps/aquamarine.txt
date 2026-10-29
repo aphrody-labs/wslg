@@ -1,0 +1,22 @@
+# Arch aquamarine 0.15.1-1 depends+makedepends, 2026-10-29
+cmake
+glibc
+libEGL.so
+libdisplay-info
+libdisplay-info.so
+libdrm
+libgcc
+libglvnd
+libhyprutils.so
+libinput
+libseat.so
+libstdc++
+libudev.so
+libwayland-client.so
+mesa
+opengl-driver
+pixman
+seatd
+systemd-libs
+wayland
+wayland-protocols

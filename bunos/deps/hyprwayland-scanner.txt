@@ -1,0 +1,5 @@
+# Arch hyprwayland-scanner 0.4.6-1 depends+makedepends, 2026-10-29
+cmake
+gcc
+git
+pugixml

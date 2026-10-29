@@ -1,0 +1,4 @@
+# Arch hyprutils 0.14.3-1 depends+makedepends, 2026-10-29
+cmake
+libpixman-1.so
+pixman

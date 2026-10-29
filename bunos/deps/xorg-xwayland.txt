@@ -1,0 +1,26 @@
+# Arch xorg-xwayland 24.1.14-1 depends+makedepends, 2026-10-29
+dbus
+glibc
+libdecor
+libdrm
+libei
+libepoxy
+libglvnd
+libtirpc
+libxau
+libxcvt
+libxfont2
+libxkbfile
+libxshmfence
+mesa
+mesa-libgl
+meson
+nettle
+pixman
+systemd
+wayland
+wayland-protocols
+xorg-font-util
+xorg-server-common
+xorgproto
+xtrans

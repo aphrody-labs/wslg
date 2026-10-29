@@ -15,14 +15,15 @@ RUN pacman -Syu --noconfirm --needed \
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig \
     LD_LIBRARY_PATH=/usr/local/lib \
     PATH=/usr/local/bin:/usr/bin:/bin
-COPY bunos/arch-deps.sh bunos/versions.env /opt/bunos/
+COPY bunos/versions.env /opt/bunos/
+COPY bunos/deps/ /opt/bunos/deps/
 COPY bunos/patches/ /opt/bunos/patches/
 WORKDIR /src
 
 # ---------------------------------------------------------------- Xwayland (xwayland-shell)
 FROM base AS xwayland
 RUN . /opt/bunos/versions.env \
- && pacman -S --noconfirm --needed --asdeps $(/opt/bunos/arch-deps.sh xorg-xwayland) \
+ && pacman -S --noconfirm --needed --asdeps $(/opt/bunos/deps/list.sh xorg-xwayland) \
  && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
  && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
  && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release \
@@ -33,6 +34,7 @@ RUN . /opt/bunos/versions.env \
 # ---------------------------------------------------------------- Weston
 FROM xwayland AS weston
 RUN . /opt/bunos/versions.env \
+ && pacman -S --noconfirm --needed --asdeps $(/opt/bunos/deps/list.sh weston) \
  && git clone --depth 1 -b "${WESTON_TAG}" https://gitlab.freedesktop.org/wayland/weston.git weston \
  && test "$(git -C weston rev-parse HEAD)" = "${WESTON_SHA}" \
  && meson setup weston/build weston --prefix=/usr/local --libdir=lib --buildtype=release \
@@ -51,7 +53,7 @@ RUN . /opt/bunos/versions.env \
 FROM weston AS hyprland
 RUN . /opt/bunos/versions.env \
  && pacman -S --noconfirm --needed --asdeps \
-      $(/opt/bunos/arch-deps.sh hyprland aquamarine hyprcursor hyprgraphics hyprlang hyprutils hyprwayland-scanner) \
+      $(/opt/bunos/deps/list.sh hyprland aquamarine hyprcursor hyprgraphics hyprlang hyprutils hyprwayland-scanner) \
  && clone() { git clone --depth 1 -b "$2" "https://github.com/hyprwm/$1.git" "$1" \
               && test "$(git -C "$1" rev-parse HEAD)" = "$3"; } \
  && cm() { cmake -S "$1" -B "$1/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \

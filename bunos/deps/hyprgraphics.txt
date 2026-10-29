@@ -1,0 +1,22 @@
+# Arch hyprgraphics 0.5.1-4 depends+makedepends, 2026-10-29
+cairo
+cmake
+file
+glibc
+libgcc
+libglvnd
+libhyprutils.so
+libjpeg-turbo
+libjpeg.so
+libjxl
+libjxl.so
+libjxl_threads.so
+libmagic.so
+libpangocairo-1.0.so
+libpng
+librsvg
+libstdc++
+libwebp
+libwebp.so
+pango
+pixman

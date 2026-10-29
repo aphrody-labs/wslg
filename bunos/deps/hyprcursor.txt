@@ -1,0 +1,13 @@
+# Arch hyprcursor 0.1.13-7 depends+makedepends, 2026-10-29
+cairo
+cmake
+glibc
+libgcc
+libhyprlang.so
+librsvg
+librsvg-2.so
+libstdc++
+libtomlplusplus.so
+libzip
+libzip.so
+tomlplusplus

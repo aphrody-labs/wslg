@@ -1,0 +1,6 @@
+# Arch hyprlang 0.6.8-5 depends+makedepends, 2026-10-29
+cmake
+glibc
+libgcc
+libhyprutils.so
+libstdc++
