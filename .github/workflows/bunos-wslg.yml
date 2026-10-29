@@ -65,6 +65,7 @@ jobs:
       - name: Try to create a DRM render node (vgem) on the runner
         run: |
           sudo modprobe vgem 2>&1 || echo "vgem module not available on this kernel"
+          sudo chmod 666 /dev/dri/* 2>/dev/null || true
           ls -l /dev/dri 2>&1 || echo "no /dev/dri"
       - name: Run probes
         run: |
