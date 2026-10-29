@@ -1,0 +1,35 @@
+| global | wanted | WSLg Weston today (static, mirror `working`) | Weston 16.0.2 (live, headless GL) | Hyprland 0.57.0 (live, headless) |
+|---|---|---|---|---|
+| `wl_compositor` | 6 | 4 | 5 | 6 |
+| `wl_seat` | 9 | 7 | - | 9 |
+| `wl_output` | 4 | 3 | 4 | 4 |
+| `wl_data_device_manager` | 3 | 3 | 3 | 3 |
+| `xdg_wm_base` | 6 | 1 | 5 | 7 |
+| `zxdg_decoration_manager_v1` | 1 | - | - | 2 |
+| `zwlr_layer_shell_v1` | 4 | - | - | 5 |
+| `wp_fractional_scale_manager_v1` | 1 | - | - | 1 |
+| `wp_viewporter` | 1 | 1 | 1 | 1 |
+| `zwp_linux_dmabuf_v1` | 5 | 3 | 5 | 5 |
+| `wp_presentation` | 2 | 1 | 2 | 2 |
+| `zwp_text_input_manager_v3` | 1 | - | - | 1 |
+| `zwp_input_method_manager_v2` | 1 | - | - | 1 |
+| `zwp_pointer_constraints_v1` | 1 | 1 | 1 | 1 |
+| `zwp_relative_pointer_manager_v1` | 1 | 1 | 1 | 1 |
+| `zwp_idle_inhibit_manager_v1` | 1 | - | - | 1 |
+| `zwp_primary_selection_device_manager_v1` | 1 | - | - | 1 |
+| `ext_session_lock_manager_v1` | 1 | - | - | 1 |
+| `xwayland_shell_v1` | 1 | - | - | 1 |
+| `wp_cursor_shape_manager_v1` | 1 | - | - | 2 |
+| `xdg_activation_v1` | 1 | - | - | 1 |
+| `ext_foreign_toplevel_list_v1` | 1 | - | - | 1 |
+| `zwlr_foreign_toplevel_manager_v1` | 3 | - | - | 3 |
+| `zwlr_output_manager_v1` | 4 | - | - | 4 |
+| `zwlr_screencopy_manager_v1` | 3 | - | - | 3 |
+| `ext_idle_notifier_v1` | 1 | - | - | 2 |
+| `wp_security_context_manager_v1` | 1 | - | - | 1 |
+| `zwp_pointer_gestures_v1` | 3 | - | - | 3 |
+| `zwp_tablet_manager_v2` | 1 | - | - | 1 |
+| `wp_single_pixel_buffer_manager_v1` | 1 | - | 1 | 1 |
+| `wp_content_type_manager_v1` | 1 | - | - | 1 |
+| `wp_tearing_control_manager_v1` | 1 | - | 1 | 1 |
+| `zxdg_output_manager_v1` | 3 | 2 | 2 | 3 |

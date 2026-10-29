@@ -189,7 +189,7 @@ if ls /dev/dri/renderD* >/dev/null 2>&1; then
     hyprctl monitors >"$OUT/hyprctl-monitors.txt" 2>&1
     sock=$(ls "$XDG_RUNTIME_DIR" | grep -m1 '^wayland-[0-9]*$')
     globals_of "$sock" wayland-info-hyprland
-    wlr-randr >"$OUT/wlr-randr.txt" 2>&1
+    WAYLAND_DISPLAY=$sock wlr-randr >"$OUT/wlr-randr.txt" 2>&1
     python3 "$HERE/compat.py" checklist "$OUT/wayland-info-hyprland.json" "$HERE/checklist.json" >"$OUT/checklist-hyprland.tsv"
     rec hyprland-headless pass "hyprctl answered: $(head -1 "$OUT/hyprctl-version.txt"); wlr-randr output $(grep -c . "$OUT/wlr-randr.txt") lines"
   else

@@ -1,0 +1,14 @@
+versions	pass	see versions.txt
+weston16-headless-pixman	pass	22 globals
+weston-info	skipped	weston-info is not built by 16.0.2 (-Dtools=info installed nothing); wayland-info is the global lister
+xwayland-xdpyinfo	pass	display :0: vendor release number: 12600099
+xwayland-rootless	pass	61 /usr/local/bin/Xwayland :0 -rootless -listenfd 16 -listenfd 17 -displayfd 29 -wm 27 -terminate
+xwayland-shell-v1	pass	global offered after Xwayland started
+weston-simple-shm	pass	client stayed connected for 4 s
+compat-tables	pass	tables written; #missing_or_old 4 5 (aquamarine)
+weston16-headless-gl	pass	zwp_linux_dmabuf_v1 version 5
+weston16-rdp-backend	pass	listens on 127.0.0.1:33890 (FreeRDP 3.32.2)
+hyprland-binary	pass	Hyprland 0.57.0 built from branch  at commit 0aa6745f705f2c4b0a5004eb019ef76e5bbdb426 clean (VERSION: bump to 0.57.0).
+hyprctl-binary	pass	/usr/local/bin/hyprctl; help printed
+hyprland-nested-on-weston16	fail	wayland backend refused the host (rc=124, Hyprland kept running on its headless fallback): Wayland backend cannot start: Missing protocols; host lacks: wl_seat(-<9) xdg_wm_base(5<6) wl_compositor(5<6) 
+hyprland-headless	pass	hyprctl answered: Hyprland 0.57.0 built from branch  at commit 0aa6745f705f2c4b0a5004eb019ef76e5bbdb426 clean (VERSION: bump to 0.57.0).; wlr-randr output 1 lines
