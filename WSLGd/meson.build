@@ -23,3 +23,6 @@ executable('WSLGd',
            dependencies: dep_winpr,
            link_args: '-lcap',
            install : true)
+
+compositor_test = executable('compositor_test', 'tests/compositor_test.cpp')
+test('compositor', compositor_test)

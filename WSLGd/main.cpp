@@ -4,6 +4,7 @@
 #include "common.h"
 #include "ProcessMonitor.h"
 #include "FontMonitor.h"
+#include "Compositor.h"
 
 #define CONFIG_FILE ".wslgconfig"
 #define MSRDC_EXE "msrdc.exe"
@@ -40,6 +41,8 @@ constexpr auto c_westonShellDesktopEnv = "WSL2_WESTON_SHELL_DESKTOP";
 
 constexpr auto c_westonRdprailShell = "rdprail-shell";
 constexpr auto c_westonRdpdesktopShell = "desktop-shell";
+
+constexpr auto c_compositorEnv = "WSL2_COMPOSITOR";
 
 constexpr auto c_rdpRailFile = "wslg.rdp";
 constexpr auto c_rdpDesktopFile = "wslg_desktop.rdp";
@@ -211,6 +214,19 @@ void WaitForReadyNotify(int notifyFd)
     THROW_LAST_ERROR_IF(!fd);
 }
 
+// True when a DRM render node exists. aquamarine (Hyprland) allocates through GBM on a DRM
+// node; WSL2 normally exposes only /dev/dxg, so Hyprland modes need one provided by the kernel.
+bool HasDrmRenderNode()
+{
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator("/dev/dri", ec)) {
+        if (entry.path().filename().string().rfind("renderD", 0) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int main(int Argc, char *Argv[])
 try {
     wil::g_LogExceptionCallback = LogException;
@@ -248,6 +264,25 @@ try {
     }
 
     SetupOptionalEnv();
+
+    // BunOS: compositor selection (weston | hyprland-nested | hyprland-headless).
+    auto compositorMode = wslgd::ParseCompositorMode(getenv(c_compositorEnv));
+    if (compositorMode == wslgd::CompositorMode::Invalid) {
+        LOG_ERROR("%s=%s is not one of weston, hyprland-nested, hyprland-headless; using weston.",
+                  c_compositorEnv, getenv(c_compositorEnv));
+        compositorMode = wslgd::CompositorMode::Weston;
+    }
+    if (wslgd::IsHyprland(compositorMode) && access("/usr/bin/Hyprland", X_OK) != 0) {
+        LOG_ERROR("%s=%s but /usr/bin/Hyprland is not installed; using weston.",
+                  c_compositorEnv, wslgd::CompositorModeName(compositorMode));
+        compositorMode = wslgd::CompositorMode::Weston;
+    }
+    if (wslgd::IsHyprland(compositorMode) && !HasDrmRenderNode()) {
+        LOG_ERROR("%s=%s needs a DRM render node (aquamarine GBM allocator) and /dev/dri has none; using weston.",
+                  c_compositorEnv, wslgd::CompositorModeName(compositorMode));
+        compositorMode = wslgd::CompositorMode::Weston;
+    }
+    LOG_INFO("compositor mode: %s", wslgd::CompositorModeName(compositorMode));
 
     // if any components output log to /dev/kmsg, make it writable.
     if (GetEnvBool("WSLG_LOG_KMSG", false))
@@ -450,6 +485,26 @@ try {
     // Wait weston to be ready before starting RDP client, pulseaudio server.
     WaitForReadyNotify(notifyFd.get());
     unlink(WESTON_NOTIFY_SOCKET);
+
+    // BunOS: Hyprland runs next to the Weston RDP/RAIL stack, which still owns the Windows side
+    // (RDP connection, PulseAudio sinks, app list). Nested: Hyprland is a Wayland client of
+    // wayland-0 and serves wayland-1. Headless: no host compositor is visible to aquamarine.
+    if (wslgd::IsHyprland(compositorMode)) {
+        std::vector<std::string> hyprlandEnv =
+            wslgd::HyprlandEnv(compositorMode, getenv("WAYLAND_DISPLAY"));
+        hyprlandEnv.emplace_back(std::string("WSLG_COMPOSITOR=") + wslgd::CompositorModeName(compositorMode));
+        if (compositorMode == wslgd::CompositorMode::HyprlandHeadless) {
+            // ProcessMonitor appends to environ, so the inherited value has to be removed.
+            unsetenv("WAYLAND_DISPLAY");
+        }
+        monitor.LaunchProcess(
+            wslgd::HyprlandCommand(wslgd::HyprlandConfigPath(compositorMode)),
+            std::vector<cap_value_t>{},
+            std::move(hyprlandEnv));
+        if (compositorMode == wslgd::CompositorMode::HyprlandHeadless) {
+            setenv("WAYLAND_DISPLAY", "wayland-0", true);
+        }
+    }
 
     // Start font monitoring if user distro's X11 fonts to be shared with system distro.
     if (GetEnvBool("WSLG_USE_USER_DISTRO_XFONTS", true))

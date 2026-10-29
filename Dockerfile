@@ -461,6 +461,9 @@ COPY config/wsl.conf /etc/wsl.conf
 COPY config/weston.ini /home/wslg/.config/weston.ini
 COPY config/local.conf /etc/fonts/local.conf
 
+# BunOS: Hyprland configs used by WSL2_COMPOSITOR=hyprland-nested|hyprland-headless.
+COPY config/hyprland-nested.lua config/hyprland-headless.lua /etc/wslg/
+
 # Copy default icon file.
 COPY resources/linux.png /usr/share/icons/wsl/linux.png
 
