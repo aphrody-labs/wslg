@@ -113,6 +113,34 @@ jobs:
           path: bunos-usr-local.tar.gz
           compression-level: 0
 
+  xwayland-candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: stable
+            tag: xwayland-24.1.14
+            sha: d958b4e84c903e8d5851b5ea587b998e4834ce62
+          - name: rc-26.1
+            tag: xwayland-26.0.99.903
+            sha: c9d66306371c68e23923ceaa2dc3aa1ba97e7163
+    name: xwayland-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build libwayland 1.26.0 + wayland-protocols 1.49 + Xwayland ${{ matrix.tag }}
+        run: |
+          docker build -f bunos/Dockerfile --target xwayland             --build-arg XW_TAG=${{ matrix.tag }} --build-arg XW_SHA=${{ matrix.sha }} -t xw:${{ matrix.name }} .
+      - name: Versions
+        run: |
+          docker run --rm xw:${{ matrix.name }} sh -c 'Xwayland -version 2>&1 | head -3; pkg-config --modversion wayland-server wayland-protocols' | tee xwayland-${{ matrix.name }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xwayland-${{ matrix.name }}
+          path: xwayland-${{ matrix.name }}.txt
+
   system-distro:
     needs: unit
     if: (github.event_name == 'workflow_dispatch' && inputs.system_distro) || contains(github.event.head_commit.message, '[distro]')

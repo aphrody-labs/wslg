@@ -20,9 +20,26 @@ COPY bunos/deps/ /opt/bunos/deps/
 COPY bunos/patches/ /opt/bunos/patches/
 WORKDIR /src
 
-# ---------------------------------------------------------------- Xwayland (xwayland-shell)
-FROM base AS xwayland
+# ---------------------------------------------------------------- libwayland + wayland-protocols
+FROM base AS wayland
 RUN . /opt/bunos/versions.env \
+ && git clone --depth 1 -b "${WAYLAND_TAG}" https://gitlab.freedesktop.org/wayland/wayland.git wayland \
+ && test "$(git -C wayland rev-parse HEAD)" = "${WAYLAND_SHA}" \
+ && meson setup wayland/build wayland --prefix=/usr/local --libdir=lib --buildtype=release \
+      -Ddocumentation=false -Dtests=false -Ddtd_validation=false \
+ && ninja -C wayland/build install \
+ && git clone --depth 1 -b "${WAYLAND_PROTOCOLS_TAG}" https://gitlab.freedesktop.org/wayland/wayland-protocols.git wlp \
+ && test "$(git -C wlp rev-parse HEAD)" = "${WAYLAND_PROTOCOLS_SHA}" \
+ && meson setup wlp/build wlp --prefix=/usr/local --libdir=lib -Dtests=false \
+ && ninja -C wlp/build install && ldconfig
+
+# ---------------------------------------------------------------- Xwayland (xwayland-shell)
+# XW_TAG/XW_SHA build args override the pins; they default to the stable line; CI also builds the 26.1 RC candidate.
+FROM wayland AS xwayland
+ARG XW_TAG=
+ARG XW_SHA=
+RUN . /opt/bunos/versions.env \
+ && XWAYLAND_TAG=${XW_TAG:-$XWAYLAND_TAG} && XWAYLAND_SHA=${XW_SHA:-$XWAYLAND_SHA} \
  && pacman -S --noconfirm --needed --asdeps $(bash /opt/bunos/deps/list.sh xorg-xwayland) \
  && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
  && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
@@ -44,7 +61,7 @@ RUN . /opt/bunos/versions.env \
       -Dxwayland=true -Dxwayland-path=/usr/local/bin/Xwayland \
       -Dshell-desktop=true -Dshell-ivi=false -Dshell-kiosk=false -Dshell-lua=false \
       -Dsystemd=false -Dcolor-management-lcms=false -Dimage-jpeg=true -Dimage-webp=false \
-      -Dpipewire=false -Ddeprecated-pipewire=false -Ddeprecated-remoting=false \
+      -Ddeprecated-pipewire=false -Ddeprecated-remoting=false \
       -Dsimple-clients=shm,egl,damage -Dtools=info -Ddemo-clients=false \
       -Dtests=false -Ddoc=false \
  && ninja -C weston/build install

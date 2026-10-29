@@ -1,0 +1,65 @@
+# weston-mirror working (7fbf69314f8a) minus Weston 9.0.0 (04d3ae265d8d) applied per file onto wayland/weston 16.0.2 (530ae6c769d2) with git apply --reject. 2026-10-29. Static only, nothing compiled.
+# file	status	result	rejected_hunks
+.gitignore	modified	0/1 hunks apply	1
+SECURITY.md	added-in-mirror	absent in 16 (needs porting)	-
+azure-pipelines.yml	added-in-mirror	absent in 16 (needs porting)	-
+clients/meson.build	modified	1/1 hunks apply	0
+clients/rdprail-shell.c	added-in-mirror	absent in 16 (needs porting)	-
+compositor/main.c	modified	file gone/moved in 16	-
+compositor/meson.build	modified	file gone/moved in 16	-
+compositor/rdpaudio.c	added-in-mirror	absent in 16 (needs porting)	-
+compositor/rdpaudio.h	added-in-mirror	absent in 16 (needs porting)	-
+compositor/rdpaudioin.c	added-in-mirror	absent in 16 (needs porting)	-
+compositor/rdpdisp.c	added-in-mirror	absent in 16 (needs porting)	-
+compositor/rdpdisp.h	modified	file gone/moved in 16	-
+compositor/weston.h	modified	file gone/moved in 16	-
+compositor/wslgd-notify.c	added-in-mirror	absent in 16 (needs porting)	-
+compositor/xwayland.c	modified	file gone/moved in 16	-
+desktop-shell/shell.c	modified	1/4 hunks apply	3
+include/libweston-desktop/libweston-desktop.h	modified	file gone/moved in 16	-
+include/libweston/backend-rdp.h	modified	0/3 hunks apply	3
+include/libweston/libweston.h	modified	1/7 hunks apply	6
+include/libweston/xwayland-api.h	modified	0/1 hunks apply	1
+ivi-shell/ivi-layout.c	modified	0/1 hunks apply	1
+kiosk-shell/kiosk-shell.c	modified	0/2 hunks apply	2
+libweston-desktop/internal.h	modified	file gone/moved in 16	-
+libweston-desktop/libweston-desktop.c	modified	file gone/moved in 16	-
+libweston-desktop/xwayland.c	modified	file gone/moved in 16	-
+libweston/backend-rdp/hash.c	added-in-mirror	absent in 16 (needs porting)	-
+libweston/backend-rdp/hash.h	added-in-mirror	absent in 16 (needs porting)	-
+libweston/backend-rdp/meson.build	modified	0/1 hunks apply	1
+libweston/backend-rdp/rdp.c	modified	1/41 hunks apply	40
+libweston/backend-rdp/rdp.h	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
+libweston/backend-rdp/rdpclip.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
+libweston/backend-rdp/rdpdisp.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
+libweston/backend-rdp/rdprail.c	added-in-mirror	absent in 16 (needs porting)	-
+libweston/backend-rdp/rdputil.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
+libweston/compositor.c	modified	5/21 hunks apply	16
+libweston/input.c	modified	0/3 hunks apply	3
+libweston/pixman-renderer.c	modified	2/2 hunks apply	0
+libweston/renderer-gl/gl-renderer.c	modified	2/5 hunks apply	3
+libweston/timeline.c	modified	1/2 hunks apply	1
+libweston/timeline.h	modified	0/2 hunks apply	2
+meson.build	modified	0/2 hunks apply	2
+meson_options.txt	modified	0/3 hunks apply	3
+protocol/meson.build	modified	0/1 hunks apply	1
+protocol/weston-rdprail-shell.xml	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/app-list.c	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/img-load.c	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/input-panel.c	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/meson.build	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/shell.c	added-in-mirror	absent in 16 (needs porting)	-
+rdprail-shell/shell.h	added-in-mirror	absent in 16 (needs porting)	-
+shared/cairo-util.h	modified	0/1 hunks apply	1
+shared/config-parser.c	modified	0/1 hunks apply	1
+shared/frame.c	modified	0/1 hunks apply	1
+shared/meson.build	modified	0/1 hunks apply	1
+shared/xalloc.h	modified	0/1 hunks apply	1
+tests/meson.build	modified	0/2 hunks apply	2
+tests/rdp-teardown-test.c	added-in-mirror	absent in 16 (needs porting)	-
+tests/surface-screenshot-test.c	modified	1/1 hunks apply	0
+xwayland/launcher.c	modified	2/6 hunks apply	4
+xwayland/selection.c	modified	9/15 hunks apply	6
+xwayland/window-manager.c	modified	17/52 hunks apply	35
+xwayland/xwayland-internal-interface.h	modified	0/2 hunks apply	2
+xwayland/xwayland.h	modified	0/4 hunks apply	4

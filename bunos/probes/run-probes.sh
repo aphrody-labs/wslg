@@ -54,6 +54,11 @@ if wait_socket bunos-pixman 20; then
   globals_of bunos-pixman wayland-info-weston16-pixman
   n=$(python3 -c "import json;print(len(json.load(open('$OUT/wayland-info-weston16-pixman.json'))))")
   if [ "$n" -gt 5 ]; then rec weston16-headless-pixman pass "$n globals"; else rec weston16-headless-pixman fail "only $n globals"; fi
+  if WAYLAND_DISPLAY=bunos-pixman timeout 10 weston-info >"$OUT/weston-info.txt" 2>&1 && [ -s "$OUT/weston-info.txt" ]; then
+    rec weston-info pass "$(grep -c 'interface:' "$OUT/weston-info.txt") interface lines"
+  else
+    rec weston-info fail "weston-info failed or empty"
+  fi
 else
   rec weston16-headless-pixman fail "socket never appeared; see weston-pixman.log"
 fi
