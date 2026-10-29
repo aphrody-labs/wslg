@@ -1,0 +1,156 @@
+name: bunos-wslg
+
+# BunOS patch queue CI. No WSL anywhere: everything runs in containers on ubuntu-latest.
+#   unit          WSLGd compositor-switch unit test (g++ and clang++) + pin check.
+#   source-stack  Weston 16 + Xwayland (xwayland-shell) + Hyprland chain from source on Arch,
+#                 then headless protocol probes (wayland-info, xdpyinfo, weston-simple-shm,
+#                 hyprctl when a DRM render node exists).
+#   system-distro the stock WSLg Azure Linux recipe with this fork's patches; uploads the
+#                 filesystem tar and the VHD built by build-and-export.sh.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "bunos/**"
+      - "WSLGd/**"
+      - "config/**"
+      - "Dockerfile"
+      - "build-and-export.sh"
+      - ".github/workflows/bunos-wslg.yml"
+  workflow_dispatch:
+    inputs:
+      system_distro:
+        description: "Also build the Azure Linux system distro (tar + VHD, about 1-2 h)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: compositor_test with g++ and clang++
+        run: |
+          set -e
+          for cxx in g++ clang++; do
+            $cxx -std=c++17 -Wall -Wextra -Werror WSLGd/tests/compositor_test.cpp -o /tmp/ct-$cxx
+            /tmp/ct-$cxx
+          done
+      - name: bunos pins still resolve to the recorded SHAs
+        run: bash bunos/check-versions.sh
+      - name: evidence JSON is valid
+        run: for f in bunos/evidence/*.json bunos/probes/*.json; do python3 -m json.tool "$f" >/dev/null && echo "ok $f"; done
+
+  source-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build bunos source stack (Weston, Xwayland, Hyprland chain)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: bunos/Dockerfile
+          target: probes
+          load: true
+          tags: bunos-probes:ci
+          cache-from: type=gha,scope=bunos-source-stack
+          cache-to: type=gha,scope=bunos-source-stack,mode=max
+      - name: Try to create a DRM render node (vgem) on the runner
+        run: |
+          sudo modprobe vgem 2>&1 || echo "vgem module not available on this kernel"
+          ls -l /dev/dri 2>&1 || echo "no /dev/dri"
+      - name: Run probes
+        run: |
+          mkdir -p out && chmod 777 out
+          args=()
+          if ls /dev/dri/renderD* >/dev/null 2>&1; then
+            for d in /dev/dri/*; do args+=(--device "$d"); done
+            args+=(--group-add "$(stat -c %g "$(ls /dev/dri/renderD* | head -1)")")
+          fi
+          docker run --rm "${args[@]}" -v "$PWD/out:/out" bunos-probes:ci
+      - name: Summary and required probes
+        if: always()
+        run: |
+          {
+            echo "## BunOS probes"
+            echo
+            echo "| probe | status | detail |"
+            echo "|---|---|---|"
+            awk -F'\t' '{gsub(/\|/,"/",$3); printf "| %s | %s | %s |\n",$1,$2,$3}' out/report.tsv
+            echo
+            echo "### versions"; echo '```'; cat out/versions.txt; echo '```'
+            for t in aquamarine-compat-weston16 checklist-weston16 checklist-hyprland; do
+              [ -f "out/$t.tsv" ] && { echo "### $t (name, wanted, offered, verdict)"; echo '```'; cat "out/$t.tsv"; echo '```'; }
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          for p in versions weston16-headless-pixman xwayland-xdpyinfo xwayland-rootless xwayland-shell-v1 weston-simple-shm hyprland-binary; do
+            awk -F'\t' -v p="$p" '$1==p && $2=="pass" {f=1} END {exit !f}' out/report.tsv || { echo "required probe not passing: $p"; rc=1; }
+          done
+          exit ${rc:-0}
+      - name: Export the source-built stack (/usr/local)
+        if: always()
+        run: |
+          cid=$(docker create bunos-probes:ci)
+          docker cp "$cid:/usr/local" usr-local && docker rm "$cid"
+          tar -C usr-local -czf bunos-usr-local.tar.gz .
+          ls -l bunos-usr-local.tar.gz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bunos-probe-report
+          path: out/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bunos-usr-local
+          path: bunos-usr-local.tar.gz
+          compression-level: 0
+
+  system-distro:
+    needs: unit
+    if: github.event_name != 'workflow_dispatch' || inputs.system_distro
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Clone vendor trees (CONTRIBUTING.md recipe)
+        run: |
+          set -e
+          git clone --depth 1 -b working https://github.com/microsoft/FreeRDP-mirror vendor/FreeRDP
+          git clone --depth 1 -b working https://github.com/microsoft/weston-mirror vendor/weston
+          git clone -b working https://github.com/microsoft/PulseAudio-mirror vendor/pulseaudio
+          git clone --depth 1 -b v1.608.0 https://github.com/microsoft/DirectX-Headers.git vendor/DirectX-Headers-1.0
+          git clone --depth 1 -b mesa-23.1.0 https://gitlab.freedesktop.org/mesa/mesa.git vendor/mesa
+          for d in vendor/*/; do [ -d "$d.git" ] && echo "$d $(git -C "$d" rev-parse HEAD)"; done | tee vendor-shas.txt
+      - name: Build image and export tar + VHD
+        run: ./build-and-export.sh
+      - name: Inspect the built image
+        run: |
+          set -x
+          docker run --rm system-distro-x64 sh -c '
+            cat /etc/versions.txt
+            weston --version; Xwayland -version 2>&1 | head -1; pulseaudio --version
+            ls -l /usr/bin/WSLGd /etc/wslg/ /usr/lib64/libweston-9/ 2>/dev/null || ls -l /usr/bin/WSLGd /etc/wslg/
+          ' | tee image-inspect.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wslg-system-distro
+          path: |
+            system_x64.tar
+            system_x64.vhd
+            vendor-shas.txt
+            image-inspect.txt
+          compression-level: 1
