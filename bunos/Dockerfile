@@ -72,7 +72,7 @@ RUN . /opt/bunos/versions.env \
 FROM weston AS hyprland
 RUN . /opt/bunos/versions.env \
  && pacman -S --noconfirm --needed --asdeps \
-      $(bash /opt/bunos/deps/list.sh hyprland aquamarine hyprcursor hyprgraphics hyprlang hyprutils hyprwayland-scanner) \
+      $(bash /opt/bunos/deps/list.sh hyprland hyprwire aquamarine hyprcursor hyprgraphics hyprlang hyprutils hyprwayland-scanner) \
  && clone() { git clone --depth 1 -b "$2" "https://github.com/hyprwm/$1.git" "$1" \
               && test "$(git -C "$1" rev-parse HEAD)" = "$3"; } \
  && cm() { cmake -S "$1" -B "$1/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
@@ -87,8 +87,9 @@ RUN . /opt/bunos/versions.env \
  && clone hyprgraphics "$HYPRGRAPHICS_TAG" "$HYPRGRAPHICS_SHA" && cm hyprgraphics \
  && clone aquamarine "$AQUAMARINE_TAG" "$AQUAMARINE_SHA" \
  && git -C aquamarine apply /opt/bunos/patches/aquamarine-*.patch && cm aquamarine \
+ && clone hyprwire "$HYPRWIRE_TAG" "$HYPRWIRE_SHA" && cm hyprwire \
  && ldconfig \
- && git clone --depth 1 -b "$HYPRLAND_TAG" https://github.com/hyprwm/Hyprland.git Hyprland \
+ && git clone --depth 1 --recurse-submodules --shallow-submodules -b "$HYPRLAND_TAG" https://github.com/hyprwm/Hyprland.git Hyprland \
  && test "$(git -C Hyprland rev-parse HEAD)" = "$HYPRLAND_SHA" \
  && cm Hyprland -DNO_TESTS=ON -DNO_HYPRPM=ON -DNO_UWSM=ON -DNO_SYSTEMD=ON -DBUILD_TESTING=OFF \
  && ldconfig

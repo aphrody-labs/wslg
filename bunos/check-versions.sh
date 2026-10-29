@@ -15,6 +15,7 @@ declare -A URL=(
   [HYPRGRAPHICS]=https://github.com/hyprwm/hyprgraphics.git
   [HYPRWAYLAND_SCANNER]=https://github.com/hyprwm/hyprwayland-scanner.git
   [HYPRLAND_PROTOCOLS]=https://github.com/hyprwm/hyprland-protocols.git
+  [HYPRWIRE]=https://github.com/hyprwm/hyprwire.git
   [WAYLAND]=https://gitlab.freedesktop.org/wayland/wayland.git
   [WAYLAND_PROTOCOLS]=https://gitlab.freedesktop.org/wayland/wayland-protocols.git
   [XWAYLAND_CANDIDATE]=https://gitlab.freedesktop.org/xorg/xserver.git
