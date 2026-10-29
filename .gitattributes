@@ -1,0 +1,4 @@
+bunos/** text eol=lf
+*.sh text eol=lf
+config/*.lua text eol=lf
+WSLGd/Compositor.h text eol=lf

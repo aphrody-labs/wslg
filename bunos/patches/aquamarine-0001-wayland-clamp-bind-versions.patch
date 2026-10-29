@@ -1,0 +1,34 @@
+From: aphrody-dev <contact@aphrody.com>
+Subject: [PATCH] wayland backend: bind wl_seat/xdg_wm_base/wl_compositor at min(advertised, wanted)
+
+aquamarine v0.15.1 binds wl_seat v9, xdg_wm_base v6 and wl_compositor v6
+unconditionally (src/backend/Wayland.cpp registry handler). libwayland rejects a bind
+above the advertised version, so hosts that advertise less (Weston 16.0.2: wl_seat 7,
+xdg_wm_base 5, wl_compositor 5; WSLg Weston 9.0.0: 7/1/4) can never be used as a host.
+Clamp to the advertised version. zwp_linux_dmabuf_v1 stays at 4 on purpose: the
+backend calls get_default_feedback, which does not exist below v4.
+
+---
+diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
+index 8905adc..611b011 100644
+--- a/src/backend/Wayland.cpp
++++ b/src/backend/Wayland.cpp
+@@ -118,15 +118,15 @@ bool Aquamarine::CWaylandBackend::start() {
+ 
+         if (NAME == "wl_seat") {
+             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 9, id)));
+-            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, 9));
++            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, std::min<uint32_t>(version, 9)));
+             initSeat();
+         } else if (NAME == "xdg_wm_base") {
+             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
+-            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, 6));
++            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, std::min<uint32_t>(version, 6)));
+             initShell();
+         } else if (NAME == "wl_compositor") {
+             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
+-            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, 6));
++            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, std::min<uint32_t>(version, 6)));
+         } else if (NAME == "wl_shm") {
+             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 1, id)));
+             waylandState.shm = makeShared<CCWlShm>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_shm_interface, 1));

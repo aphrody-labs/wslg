@@ -1,0 +1,13 @@
+{
+  "source": "hyprwm/aquamarine v0.15.1 src/backend/Wayland.cpp CWaylandBackend::start() registry handler and the missing-protocols check",
+  "required": {
+    "wl_seat": 9,
+    "xdg_wm_base": 6,
+    "wl_compositor": 6,
+    "wl_shm": 1,
+    "zwp_linux_dmabuf_v1": 4
+  },
+  "clampable": ["wl_seat", "xdg_wm_base", "wl_compositor"],
+  "clampable_note": "bunos/patches/aquamarine-0001 binds these at min(advertised, wanted); dmabuf v4 (get_default_feedback) cannot be clamped",
+  "also_needs": "a DRM render node: CBackend::start() builds a GBM allocator from the backend's drmFD (src/backend/Backend.cpp), and the wayland backend gets the node from dmabuf feedback main_device"
+}
