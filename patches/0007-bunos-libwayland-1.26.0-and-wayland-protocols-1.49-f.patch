@@ -1,0 +1,325 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 05:28:46 +0100
+Subject: [PATCH 07/13] bunos: libwayland 1.26.0 and wayland-protocols 1.49
+ from source, Xwayland stable/RC matrix, sources.json, RAIL port
+ classification, weston-info probe, fix invalid weston option
+
+---
+ .github/workflows/bunos-wslg.yml            |  28 ++++++
+ bunos/Dockerfile                            |  23 ++++-
+ bunos/check-versions.sh                     |   3 +
+ bunos/evidence/rail-port-classification.tsv |  65 +++++++++++++
+ bunos/probes/run-probes.sh                  |   5 +
+ bunos/sources.json                          | 101 ++++++++++++++++++++
+ bunos/versions.env                          |   8 ++
+ 7 files changed, 230 insertions(+), 3 deletions(-)
+ create mode 100644 bunos/evidence/rail-port-classification.tsv
+ create mode 100644 bunos/sources.json
+
+diff --git a/.github/workflows/bunos-wslg.yml b/.github/workflows/bunos-wslg.yml
+index c96c8a2..542e8b0 100644
+--- a/.github/workflows/bunos-wslg.yml
++++ b/.github/workflows/bunos-wslg.yml
+@@ -113,6 +113,34 @@ jobs:
+           path: bunos-usr-local.tar.gz
+           compression-level: 0
+ 
++  xwayland-candidate:
++    runs-on: ubuntu-latest
++    timeout-minutes: 60
++    strategy:
++      fail-fast: false
++      matrix:
++        include:
++          - name: stable
++            tag: xwayland-24.1.14
++            sha: d958b4e84c903e8d5851b5ea587b998e4834ce62
++          - name: rc-26.1
++            tag: xwayland-26.0.99.903
++            sha: c9d66306371c68e23923ceaa2dc3aa1ba97e7163
++    name: xwayland-${{ matrix.name }}
++    steps:
++      - uses: actions/checkout@v4
++      - uses: docker/setup-buildx-action@v3
++      - name: Build libwayland 1.26.0 + wayland-protocols 1.49 + Xwayland ${{ matrix.tag }}
++        run: |
++          docker build -f bunos/Dockerfile --target xwayland             --build-arg XW_TAG=${{ matrix.tag }} --build-arg XW_SHA=${{ matrix.sha }} -t xw:${{ matrix.name }} .
++      - name: Versions
++        run: |
++          docker run --rm xw:${{ matrix.name }} sh -c 'Xwayland -version 2>&1 | head -3; pkg-config --modversion wayland-server wayland-protocols' | tee xwayland-${{ matrix.name }}.txt
++      - uses: actions/upload-artifact@v4
++        with:
++          name: xwayland-${{ matrix.name }}
++          path: xwayland-${{ matrix.name }}.txt
++
+   system-distro:
+     needs: unit
+     if: (github.event_name == 'workflow_dispatch' && inputs.system_distro) || contains(github.event.head_commit.message, '[distro]')
+diff --git a/bunos/Dockerfile b/bunos/Dockerfile
+index d659455..ccb4430 100644
+--- a/bunos/Dockerfile
++++ b/bunos/Dockerfile
+@@ -20,9 +20,26 @@ COPY bunos/deps/ /opt/bunos/deps/
+ COPY bunos/patches/ /opt/bunos/patches/
+ WORKDIR /src
+ 
+-# ---------------------------------------------------------------- Xwayland (xwayland-shell)
+-FROM base AS xwayland
++# ---------------------------------------------------------------- libwayland + wayland-protocols
++FROM base AS wayland
+ RUN . /opt/bunos/versions.env \
++ && git clone --depth 1 -b "${WAYLAND_TAG}" https://gitlab.freedesktop.org/wayland/wayland.git wayland \
++ && test "$(git -C wayland rev-parse HEAD)" = "${WAYLAND_SHA}" \
++ && meson setup wayland/build wayland --prefix=/usr/local --libdir=lib --buildtype=release \
++      -Ddocumentation=false -Dtests=false -Ddtd_validation=false \
++ && ninja -C wayland/build install \
++ && git clone --depth 1 -b "${WAYLAND_PROTOCOLS_TAG}" https://gitlab.freedesktop.org/wayland/wayland-protocols.git wlp \
++ && test "$(git -C wlp rev-parse HEAD)" = "${WAYLAND_PROTOCOLS_SHA}" \
++ && meson setup wlp/build wlp --prefix=/usr/local --libdir=lib -Dtests=false \
++ && ninja -C wlp/build install && ldconfig
++
++# ---------------------------------------------------------------- Xwayland (xwayland-shell)
++# XW_TAG/XW_SHA build args override the pins; they default to the stable line; CI also builds the 26.1 RC candidate.
++FROM wayland AS xwayland
++ARG XW_TAG=
++ARG XW_SHA=
++RUN . /opt/bunos/versions.env \
++ && XWAYLAND_TAG=${XW_TAG:-$XWAYLAND_TAG} && XWAYLAND_SHA=${XW_SHA:-$XWAYLAND_SHA} \
+  && pacman -S --noconfirm --needed --asdeps $(bash /opt/bunos/deps/list.sh xorg-xwayland) \
+  && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
+  && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
+@@ -44,7 +61,7 @@ RUN . /opt/bunos/versions.env \
+       -Dxwayland=true -Dxwayland-path=/usr/local/bin/Xwayland \
+       -Dshell-desktop=true -Dshell-ivi=false -Dshell-kiosk=false -Dshell-lua=false \
+       -Dsystemd=false -Dcolor-management-lcms=false -Dimage-jpeg=true -Dimage-webp=false \
+-      -Dpipewire=false -Ddeprecated-pipewire=false -Ddeprecated-remoting=false \
++      -Ddeprecated-pipewire=false -Ddeprecated-remoting=false \
+       -Dsimple-clients=shm,egl,damage -Dtools=info -Ddemo-clients=false \
+       -Dtests=false -Ddoc=false \
+  && ninja -C weston/build install
+diff --git a/bunos/check-versions.sh b/bunos/check-versions.sh
+index 6618046..5d27714 100644
+--- a/bunos/check-versions.sh
++++ b/bunos/check-versions.sh
+@@ -15,6 +15,9 @@ declare -A URL=(
+   [HYPRGRAPHICS]=https://github.com/hyprwm/hyprgraphics.git
+   [HYPRWAYLAND_SCANNER]=https://github.com/hyprwm/hyprwayland-scanner.git
+   [HYPRLAND_PROTOCOLS]=https://github.com/hyprwm/hyprland-protocols.git
++  [WAYLAND]=https://gitlab.freedesktop.org/wayland/wayland.git
++  [WAYLAND_PROTOCOLS]=https://gitlab.freedesktop.org/wayland/wayland-protocols.git
++  [XWAYLAND_CANDIDATE]=https://gitlab.freedesktop.org/xorg/xserver.git
+ )
+ rc=0
+ for k in "${!URL[@]}"; do
+diff --git a/bunos/evidence/rail-port-classification.tsv b/bunos/evidence/rail-port-classification.tsv
+new file mode 100644
+index 0000000..7756518
+--- /dev/null
++++ b/bunos/evidence/rail-port-classification.tsv
+@@ -0,0 +1,65 @@
++# weston-mirror working (7fbf69314f8a) minus Weston 9.0.0 (04d3ae265d8d) applied per file onto wayland/weston 16.0.2 (530ae6c769d2) with git apply --reject. 2026-10-29. Static only, nothing compiled.
++# file	status	result	rejected_hunks
++.gitignore	modified	0/1 hunks apply	1
++SECURITY.md	added-in-mirror	absent in 16 (needs porting)	-
++azure-pipelines.yml	added-in-mirror	absent in 16 (needs porting)	-
++clients/meson.build	modified	1/1 hunks apply	0
++clients/rdprail-shell.c	added-in-mirror	absent in 16 (needs porting)	-
++compositor/main.c	modified	file gone/moved in 16	-
++compositor/meson.build	modified	file gone/moved in 16	-
++compositor/rdpaudio.c	added-in-mirror	absent in 16 (needs porting)	-
++compositor/rdpaudio.h	added-in-mirror	absent in 16 (needs porting)	-
++compositor/rdpaudioin.c	added-in-mirror	absent in 16 (needs porting)	-
++compositor/rdpdisp.c	added-in-mirror	absent in 16 (needs porting)	-
++compositor/rdpdisp.h	modified	file gone/moved in 16	-
++compositor/weston.h	modified	file gone/moved in 16	-
++compositor/wslgd-notify.c	added-in-mirror	absent in 16 (needs porting)	-
++compositor/xwayland.c	modified	file gone/moved in 16	-
++desktop-shell/shell.c	modified	1/4 hunks apply	3
++include/libweston-desktop/libweston-desktop.h	modified	file gone/moved in 16	-
++include/libweston/backend-rdp.h	modified	0/3 hunks apply	3
++include/libweston/libweston.h	modified	1/7 hunks apply	6
++include/libweston/xwayland-api.h	modified	0/1 hunks apply	1
++ivi-shell/ivi-layout.c	modified	0/1 hunks apply	1
++kiosk-shell/kiosk-shell.c	modified	0/2 hunks apply	2
++libweston-desktop/internal.h	modified	file gone/moved in 16	-
++libweston-desktop/libweston-desktop.c	modified	file gone/moved in 16	-
++libweston-desktop/xwayland.c	modified	file gone/moved in 16	-
++libweston/backend-rdp/hash.c	added-in-mirror	absent in 16 (needs porting)	-
++libweston/backend-rdp/hash.h	added-in-mirror	absent in 16 (needs porting)	-
++libweston/backend-rdp/meson.build	modified	0/1 hunks apply	1
++libweston/backend-rdp/rdp.c	modified	1/41 hunks apply	40
++libweston/backend-rdp/rdp.h	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
++libweston/backend-rdp/rdpclip.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
++libweston/backend-rdp/rdpdisp.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
++libweston/backend-rdp/rdprail.c	added-in-mirror	absent in 16 (needs porting)	-
++libweston/backend-rdp/rdputil.c	added-in-mirror	PATH EXISTS in 16 (diverged implementation)	-
++libweston/compositor.c	modified	5/21 hunks apply	16
++libweston/input.c	modified	0/3 hunks apply	3
++libweston/pixman-renderer.c	modified	2/2 hunks apply	0
++libweston/renderer-gl/gl-renderer.c	modified	2/5 hunks apply	3
++libweston/timeline.c	modified	1/2 hunks apply	1
++libweston/timeline.h	modified	0/2 hunks apply	2
++meson.build	modified	0/2 hunks apply	2
++meson_options.txt	modified	0/3 hunks apply	3
++protocol/meson.build	modified	0/1 hunks apply	1
++protocol/weston-rdprail-shell.xml	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/app-list.c	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/img-load.c	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/input-panel.c	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/meson.build	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/shell.c	added-in-mirror	absent in 16 (needs porting)	-
++rdprail-shell/shell.h	added-in-mirror	absent in 16 (needs porting)	-
++shared/cairo-util.h	modified	0/1 hunks apply	1
++shared/config-parser.c	modified	0/1 hunks apply	1
++shared/frame.c	modified	0/1 hunks apply	1
++shared/meson.build	modified	0/1 hunks apply	1
++shared/xalloc.h	modified	0/1 hunks apply	1
++tests/meson.build	modified	0/2 hunks apply	2
++tests/rdp-teardown-test.c	added-in-mirror	absent in 16 (needs porting)	-
++tests/surface-screenshot-test.c	modified	1/1 hunks apply	0
++xwayland/launcher.c	modified	2/6 hunks apply	4
++xwayland/selection.c	modified	9/15 hunks apply	6
++xwayland/window-manager.c	modified	17/52 hunks apply	35
++xwayland/xwayland-internal-interface.h	modified	0/2 hunks apply	2
++xwayland/xwayland.h	modified	0/4 hunks apply	4
+diff --git a/bunos/probes/run-probes.sh b/bunos/probes/run-probes.sh
+index 5f7b221..9810a08 100644
+--- a/bunos/probes/run-probes.sh
++++ b/bunos/probes/run-probes.sh
+@@ -54,6 +54,11 @@ if wait_socket bunos-pixman 20; then
+   globals_of bunos-pixman wayland-info-weston16-pixman
+   n=$(python3 -c "import json;print(len(json.load(open('$OUT/wayland-info-weston16-pixman.json'))))")
+   if [ "$n" -gt 5 ]; then rec weston16-headless-pixman pass "$n globals"; else rec weston16-headless-pixman fail "only $n globals"; fi
++  if WAYLAND_DISPLAY=bunos-pixman timeout 10 weston-info >"$OUT/weston-info.txt" 2>&1 && [ -s "$OUT/weston-info.txt" ]; then
++    rec weston-info pass "$(grep -c 'interface:' "$OUT/weston-info.txt") interface lines"
++  else
++    rec weston-info fail "weston-info failed or empty"
++  fi
+ else
+   rec weston16-headless-pixman fail "socket never appeared; see weston-pixman.log"
+ fi
+diff --git a/bunos/sources.json b/bunos/sources.json
+new file mode 100644
+index 0000000..58072c9
+--- /dev/null
++++ b/bunos/sources.json
+@@ -0,0 +1,101 @@
++{
++ "verified": "2026-10-29",
++ "method": "git ls-remote (peeled tag) + gitlab/github commit API; check with bunos/check-versions.sh",
++ "sources": {
++  "wayland": {
++   "tag": "1.26.0",
++   "sha": "87cc8a8728a923fc57938faa81ba0e74f34ecdc7",
++   "commit_date": "2026-07-16T17:24:51+02:00",
++   "url": "https://gitlab.freedesktop.org/wayland/wayland.git",
++   "note": "1.25.91 is a pre-release; 1.26.0 is the newest stable tag"
++  },
++  "wayland-protocols": {
++   "tag": "1.49",
++   "sha": "ee78491a237eaff9389a0ccf8680521d074407d3",
++   "commit_date": "2026-06-07T15:06:32+02:00",
++   "url": "https://gitlab.freedesktop.org/wayland/wayland-protocols.git"
++  },
++  "weston": {
++   "tag": "16.0.2",
++   "sha": "530ae6c769d2fd55ea5157542654810be81a3193",
++   "commit_date": "2026-10-26T11:24:09+02:00",
++   "url": "https://gitlab.freedesktop.org/wayland/weston.git"
++  },
++  "xwayland-stable": {
++   "tag": "xwayland-24.1.14",
++   "sha": "d958b4e84c903e8d5851b5ea587b998e4834ce62",
++   "commit_date": "2026-10-07T11:40:58+10:00",
++   "url": "https://gitlab.freedesktop.org/xorg/xserver.git"
++  },
++  "xwayland-candidate": {
++   "tag": "xwayland-26.0.99.903",
++   "sha": "c9d66306371c68e23923ceaa2dc3aa1ba97e7163",
++   "commit_date": "2026-10-07T09:06:49+02:00",
++   "url": "https://gitlab.freedesktop.org/xorg/xserver.git",
++   "note": "release candidate of 26.1; used only if the CI job xwayland-26 compiles, see bunos/XWAYLAND-CHOICE"
++  },
++  "weston-mirror-working": {
++   "tag": null,
++   "sha": "7fbf69314f8a74450c265650232f66f59a4e0630",
++   "commit_date": "2026-09-10",
++   "url": "https://github.com/microsoft/weston-mirror.git",
++   "note": "stock WSLg Weston; 217 commits over 9.0.0 (04d3ae265d8d)"
++  },
++  "Hyprland": {
++   "tag": "v0.57.0",
++   "sha": "0aa6745f705f2c4b0a5004eb019ef76e5bbdb426",
++   "commit_date": "2026-10-28T10:37:05Z",
++   "url": "https://github.com/hyprwm/Hyprland"
++  },
++  "aquamarine": {
++   "tag": "v0.15.1",
++   "sha": "f31c47a1b9d300847d8fc3108ad959448103dfc1",
++   "commit_date": "2026-09-17T07:32:02Z",
++   "url": "https://github.com/hyprwm/aquamarine"
++  },
++  "hyprutils": {
++   "tag": "v0.14.3",
++   "sha": "0d13d5a624eb093b600d1b2cbe448fb613c86424",
++   "commit_date": "2026-10-22T12:50:40Z",
++   "url": "https://github.com/hyprwm/hyprutils"
++  },
++  "hyprlang": {
++   "tag": "v0.6.8",
++   "sha": "3a1c1b25b059dae2c6bbc46991562ba1158d125c",
++   "commit_date": "2026-01-05T15:56:10Z",
++   "url": "https://github.com/hyprwm/hyprlang"
++  },
++  "hyprcursor": {
++   "tag": "v0.1.13",
++   "sha": "44e91d467bdad8dcf8bbd2ac7cf49972540980a5",
++   "commit_date": "2025-07-31T12:14:09Z",
++   "url": "https://github.com/hyprwm/hyprcursor"
++  },
++  "hyprgraphics": {
++   "tag": "v0.5.1",
++   "sha": "482d4b7ec36ffdaf3573086aa586b178fd5404be",
++   "commit_date": "2026-04-05T23:14:16Z",
++   "url": "https://github.com/hyprwm/hyprgraphics"
++  },
++  "hyprwayland-scanner": {
++   "tag": "v0.4.6",
++   "sha": "b8632713a6beaf28b56f2a7b0ab2fb7088dbb404",
++   "commit_date": "2026-04-25T23:28:03Z",
++   "url": "https://github.com/hyprwm/hyprwayland-scanner"
++  },
++  "hyprland-protocols": {
++   "tag": "v0.8.0",
++   "sha": "044a434ec371f985655389bcef09286b1af3d77c",
++   "commit_date": "2026-10-16T11:14:00Z",
++   "url": "https://github.com/hyprwm/hyprland-protocols"
++  },
++  "hyprland-qtutils": {
++   "tag": "v0.1.5",
++   "note": "latest tag, not built (optional Qt helper)"
++  },
++  "hyprland-guiutils": {
++   "tag": "v0.2.2",
++   "note": "latest tag, not built (optional GUI helper)"
++  }
++ }
++}
+\ No newline at end of file
+diff --git a/bunos/versions.env b/bunos/versions.env
+index f7d6ceb..cfd193f 100644
+--- a/bunos/versions.env
++++ b/bunos/versions.env
+@@ -25,3 +25,11 @@ FREERDP_LATEST=3.32.2
+ MESA_LATEST=mesa-26.2.6
+ WAYLAND_PROTOCOLS_LATEST=1.49
+ WAYLAND_LATEST=1.26.0
++# Added on owner order 2026-10-29: build wayland/wayland-protocols from source too.
++WAYLAND_TAG=1.26.0
++WAYLAND_SHA=87cc8a8728a923fc57938faa81ba0e74f34ecdc7
++WAYLAND_PROTOCOLS_TAG=1.49
++WAYLAND_PROTOCOLS_SHA=ee78491a237eaff9389a0ccf8680521d074407d3
++# Xwayland candidate (26.1 RC line); the Dockerfile ARG XWAYLAND_TAG/XWAYLAND_SHA override the stable pin.
++XWAYLAND_CANDIDATE_TAG=xwayland-26.0.99.903
++XWAYLAND_CANDIDATE_SHA=c9d66306371c68e23923ceaa2dc3aa1ba97e7163

@@ -1,0 +1,28 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 06:06:55 +0100
+Subject: [PATCH 11/13] bunos: default Xwayland pin is the newest tag that
+ compiles (xwayland-26.0.99.903, 26.1 RC); 24.1.14 kept as stable fallback
+
+---
+ bunos/versions.env | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/bunos/versions.env b/bunos/versions.env
+index c456782..fecd9cb 100644
+--- a/bunos/versions.env
++++ b/bunos/versions.env
+@@ -2,8 +2,11 @@
+ # Consumed by Dockerfile (--build-arg) and bunos/check-versions.sh; update in one place.
+ WESTON_TAG=16.0.2
+ WESTON_SHA=530ae6c769d2fd55ea5157542654810be81a3193
+-XWAYLAND_TAG=xwayland-24.1.14
+-XWAYLAND_SHA=d958b4e84c903e8d5851b5ea587b998e4834ce62
++XWAYLAND_TAG=xwayland-26.0.99.903
++XWAYLAND_SHA=c9d66306371c68e23923ceaa2dc3aa1ba97e7163
++# Stable fallback (compiled in CI too): xwayland-24.1.14 d958b4e84c903e8d5851b5ea587b998e4834ce62
++XWAYLAND_STABLE_TAG=xwayland-24.1.14
++XWAYLAND_STABLE_SHA=d958b4e84c903e8d5851b5ea587b998e4834ce62
+ HYPRLAND_TAG=v0.57.0
+ HYPRLAND_SHA=0aa6745f705f2c4b0a5004eb019ef76e5bbdb426
+ AQUAMARINE_TAG=v0.15.1

@@ -1,0 +1,322 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 05:12:50 +0100
+Subject: [PATCH 01/13] WSLGd: WSL2_COMPOSITOR switch (weston | hyprland-nested
+ | hyprland-headless)
+
+Selects the compositor stack from WSL2_COMPOSITOR (settable in .wslgconfig
+[system-distro-env]). Weston RDP/RAIL stays the Windows-facing stack in every
+mode; the Hyprland modes start Hyprland next to it and fall back to weston when
+Hyprland or a DRM render node is missing. Mode parsing and launch argv live in
+a dependency-free header with a unit test (meson test compositor).
+---
+ Dockerfile                      |  3 ++
+ WSLGd/Compositor.h              | 88 +++++++++++++++++++++++++++++++++
+ WSLGd/main.cpp                  | 55 +++++++++++++++++++++
+ WSLGd/meson.build               |  3 ++
+ WSLGd/tests/compositor_test.cpp | 45 +++++++++++++++++
+ config/hyprland-headless.lua    |  8 +++
+ config/hyprland-nested.lua      | 13 +++++
+ 7 files changed, 215 insertions(+)
+ create mode 100644 WSLGd/Compositor.h
+ create mode 100644 WSLGd/tests/compositor_test.cpp
+ create mode 100644 config/hyprland-headless.lua
+ create mode 100644 config/hyprland-nested.lua
+
+diff --git a/Dockerfile b/Dockerfile
+index 829c9ef..a9f08d2 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -461,6 +461,9 @@ COPY config/wsl.conf /etc/wsl.conf
+ COPY config/weston.ini /home/wslg/.config/weston.ini
+ COPY config/local.conf /etc/fonts/local.conf
+ 
++# BunOS: Hyprland configs used by WSL2_COMPOSITOR=hyprland-nested|hyprland-headless.
++COPY config/hyprland-nested.lua config/hyprland-headless.lua /etc/wslg/
++
+ # Copy default icon file.
+ COPY resources/linux.png /usr/share/icons/wsl/linux.png
+ 
+diff --git a/WSLGd/Compositor.h b/WSLGd/Compositor.h
+new file mode 100644
+index 0000000..ce0fe42
+--- /dev/null
++++ b/WSLGd/Compositor.h
+@@ -0,0 +1,88 @@
++// BunOS patch: compositor selection for WSLGd. Header-only and free of WSLG/winpr
++// dependencies so it can be unit-tested on any Linux host (see tests/compositor_test.cpp).
++#pragma once
++#include <cctype>
++#include <string>
++#include <vector>
++
++namespace wslgd
++{
++    // WSL2_COMPOSITOR (settable in .wslgconfig [system-distro-env]).
++    //   weston            Weston RDP backend + rdprail-shell (upstream behaviour, default).
++    //   hyprland-nested   Weston as before, plus Hyprland as a Wayland client of it
++    //                     (aquamarine wayland backend); Hyprland listens on wayland-1.
++    //   hyprland-headless Weston as before for the Windows side, plus Hyprland on its
++    //                     headless backend. No RDP bridge exists: see docs/BUNOS-PATCHES.md.
++    enum class CompositorMode
++    {
++        Weston,
++        HyprlandNested,
++        HyprlandHeadless,
++        Invalid,
++    };
++
++    inline CompositorMode ParseCompositorMode(const char* value)
++    {
++        if (value == nullptr || *value == '\0') {
++            return CompositorMode::Weston;
++        }
++
++        std::string v(value);
++        for (auto& c : v) {
++            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
++        }
++
++        if (v == "weston") {
++            return CompositorMode::Weston;
++        }
++        if (v == "hyprland-nested") {
++            return CompositorMode::HyprlandNested;
++        }
++        if (v == "hyprland-headless") {
++            return CompositorMode::HyprlandHeadless;
++        }
++        return CompositorMode::Invalid;
++    }
++
++    inline const char* CompositorModeName(CompositorMode mode)
++    {
++        switch (mode) {
++        case CompositorMode::Weston: return "weston";
++        case CompositorMode::HyprlandNested: return "hyprland-nested";
++        case CompositorMode::HyprlandHeadless: return "hyprland-headless";
++        default: return "invalid";
++        }
++    }
++
++    inline bool IsHyprland(CompositorMode mode)
++    {
++        return mode == CompositorMode::HyprlandNested || mode == CompositorMode::HyprlandHeadless;
++    }
++
++    // argv of the Hyprland launch. dbus-run-session gives Hyprland a session bus.
++    inline std::vector<std::string> HyprlandCommand(const std::string& configPath)
++    {
++        return {"/usr/bin/dbus-run-session", "--", "/usr/bin/Hyprland", "--config", configPath};
++    }
++
++    // Config file for the mode, relative to the system distro /etc/wslg.
++    inline std::string HyprlandConfigPath(CompositorMode mode)
++    {
++        return mode == CompositorMode::HyprlandHeadless ? "/etc/wslg/hyprland-headless.lua"
++                                                        : "/etc/wslg/hyprland-nested.lua";
++    }
++
++    // Extra environment (NAME=value) for the Hyprland process, on top of WSLGd's own.
++    //  nested:   host compositor is Weston's wayland-0 (aquamarine wayland backend).
++    //  headless: WAYLAND_DISPLAY must be empty so aquamarine does not pick its wayland
++    //            fallback backend; an empty entry is skipped by ProcessMonitor, so the
++    //            variable is explicitly set to the empty string by the caller via unsetenv.
++    inline std::vector<std::string> HyprlandEnv(CompositorMode mode, const std::string& hostWaylandDisplay)
++    {
++        std::vector<std::string> env{"XDG_CURRENT_DESKTOP=Hyprland", "XDG_SESSION_TYPE=wayland"};
++        if (mode == CompositorMode::HyprlandNested) {
++            env.push_back("WAYLAND_DISPLAY=" + hostWaylandDisplay);
++        }
++        return env;
++    }
++}
+diff --git a/WSLGd/main.cpp b/WSLGd/main.cpp
+index accd831..ee8ffb0 100644
+--- a/WSLGd/main.cpp
++++ b/WSLGd/main.cpp
+@@ -4,6 +4,7 @@
+ #include "common.h"
+ #include "ProcessMonitor.h"
+ #include "FontMonitor.h"
++#include "Compositor.h"
+ 
+ #define CONFIG_FILE ".wslgconfig"
+ #define MSRDC_EXE "msrdc.exe"
+@@ -41,6 +42,8 @@ constexpr auto c_westonShellDesktopEnv = "WSL2_WESTON_SHELL_DESKTOP";
+ constexpr auto c_westonRdprailShell = "rdprail-shell";
+ constexpr auto c_westonRdpdesktopShell = "desktop-shell";
+ 
++constexpr auto c_compositorEnv = "WSL2_COMPOSITOR";
++
+ constexpr auto c_rdpRailFile = "wslg.rdp";
+ constexpr auto c_rdpDesktopFile = "wslg_desktop.rdp";
+ 
+@@ -211,6 +214,19 @@ void WaitForReadyNotify(int notifyFd)
+     THROW_LAST_ERROR_IF(!fd);
+ }
+ 
++// True when a DRM render node exists. aquamarine (Hyprland) allocates through GBM on a DRM
++// node; WSL2 normally exposes only /dev/dxg, so Hyprland modes need one provided by the kernel.
++bool HasDrmRenderNode()
++{
++    std::error_code ec;
++    for (const auto& entry : std::filesystem::directory_iterator("/dev/dri", ec)) {
++        if (entry.path().filename().string().rfind("renderD", 0) == 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ int main(int Argc, char *Argv[])
+ try {
+     wil::g_LogExceptionCallback = LogException;
+@@ -249,6 +265,25 @@ try {
+ 
+     SetupOptionalEnv();
+ 
++    // BunOS: compositor selection (weston | hyprland-nested | hyprland-headless).
++    auto compositorMode = wslgd::ParseCompositorMode(getenv(c_compositorEnv));
++    if (compositorMode == wslgd::CompositorMode::Invalid) {
++        LOG_ERROR("%s=%s is not one of weston, hyprland-nested, hyprland-headless; using weston.",
++                  c_compositorEnv, getenv(c_compositorEnv));
++        compositorMode = wslgd::CompositorMode::Weston;
++    }
++    if (wslgd::IsHyprland(compositorMode) && access("/usr/bin/Hyprland", X_OK) != 0) {
++        LOG_ERROR("%s=%s but /usr/bin/Hyprland is not installed; using weston.",
++                  c_compositorEnv, wslgd::CompositorModeName(compositorMode));
++        compositorMode = wslgd::CompositorMode::Weston;
++    }
++    if (wslgd::IsHyprland(compositorMode) && !HasDrmRenderNode()) {
++        LOG_ERROR("%s=%s needs a DRM render node (aquamarine GBM allocator) and /dev/dri has none; using weston.",
++                  c_compositorEnv, wslgd::CompositorModeName(compositorMode));
++        compositorMode = wslgd::CompositorMode::Weston;
++    }
++    LOG_INFO("compositor mode: %s", wslgd::CompositorModeName(compositorMode));
++
+     // if any components output log to /dev/kmsg, make it writable.
+     if (GetEnvBool("WSLG_LOG_KMSG", false))
+         THROW_LAST_ERROR_IF(chmod("/dev/kmsg", 0666) < 0);
+@@ -451,6 +486,26 @@ try {
+     WaitForReadyNotify(notifyFd.get());
+     unlink(WESTON_NOTIFY_SOCKET);
+ 
++    // BunOS: Hyprland runs next to the Weston RDP/RAIL stack, which still owns the Windows side
++    // (RDP connection, PulseAudio sinks, app list). Nested: Hyprland is a Wayland client of
++    // wayland-0 and serves wayland-1. Headless: no host compositor is visible to aquamarine.
++    if (wslgd::IsHyprland(compositorMode)) {
++        std::vector<std::string> hyprlandEnv =
++            wslgd::HyprlandEnv(compositorMode, getenv("WAYLAND_DISPLAY"));
++        hyprlandEnv.emplace_back(std::string("WSLG_COMPOSITOR=") + wslgd::CompositorModeName(compositorMode));
++        if (compositorMode == wslgd::CompositorMode::HyprlandHeadless) {
++            // ProcessMonitor appends to environ, so the inherited value has to be removed.
++            unsetenv("WAYLAND_DISPLAY");
++        }
++        monitor.LaunchProcess(
++            wslgd::HyprlandCommand(wslgd::HyprlandConfigPath(compositorMode)),
++            std::vector<cap_value_t>{},
++            std::move(hyprlandEnv));
++        if (compositorMode == wslgd::CompositorMode::HyprlandHeadless) {
++            setenv("WAYLAND_DISPLAY", "wayland-0", true);
++        }
++    }
++
+     // Start font monitoring if user distro's X11 fonts to be shared with system distro.
+     if (GetEnvBool("WSLG_USE_USER_DISTRO_XFONTS", true))
+         fontMonitor.Start(); 
+diff --git a/WSLGd/meson.build b/WSLGd/meson.build
+index 3a5c8b0..20df757 100644
+--- a/WSLGd/meson.build
++++ b/WSLGd/meson.build
+@@ -23,3 +23,6 @@ executable('WSLGd',
+            dependencies: dep_winpr,
+            link_args: '-lcap',
+            install : true)
++
++compositor_test = executable('compositor_test', 'tests/compositor_test.cpp')
++test('compositor', compositor_test)
+diff --git a/WSLGd/tests/compositor_test.cpp b/WSLGd/tests/compositor_test.cpp
+new file mode 100644
+index 0000000..a8056a4
+--- /dev/null
++++ b/WSLGd/tests/compositor_test.cpp
+@@ -0,0 +1,45 @@
++// Unit test for WSLGd/Compositor.h; builds with any C++17 compiler, no WSL needed.
++#include "../Compositor.h"
++#include <cstdio>
++#include <cstdlib>
++
++using namespace wslgd;
++
++static int failures = 0;
++#define CHECK(cond) do { if (!(cond)) { std::fprintf(stderr, "FAIL %s:%d %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
++
++int main()
++{
++    CHECK(ParseCompositorMode(nullptr) == CompositorMode::Weston);
++    CHECK(ParseCompositorMode("") == CompositorMode::Weston);
++    CHECK(ParseCompositorMode("weston") == CompositorMode::Weston);
++    CHECK(ParseCompositorMode("WESTON") == CompositorMode::Weston);
++    CHECK(ParseCompositorMode("hyprland-nested") == CompositorMode::HyprlandNested);
++    CHECK(ParseCompositorMode("Hyprland-Headless") == CompositorMode::HyprlandHeadless);
++    CHECK(ParseCompositorMode("hyprland") == CompositorMode::Invalid);
++    CHECK(ParseCompositorMode("sway") == CompositorMode::Invalid);
++
++    CHECK(std::string(CompositorModeName(CompositorMode::HyprlandNested)) == "hyprland-nested");
++    CHECK(ParseCompositorMode(CompositorModeName(CompositorMode::HyprlandHeadless)) == CompositorMode::HyprlandHeadless);
++    CHECK(IsHyprland(CompositorMode::HyprlandNested) && IsHyprland(CompositorMode::HyprlandHeadless));
++    CHECK(!IsHyprland(CompositorMode::Weston) && !IsHyprland(CompositorMode::Invalid));
++
++    CHECK(HyprlandConfigPath(CompositorMode::HyprlandNested) == "/etc/wslg/hyprland-nested.lua");
++    CHECK(HyprlandConfigPath(CompositorMode::HyprlandHeadless) == "/etc/wslg/hyprland-headless.lua");
++
++    auto cmd = HyprlandCommand("/x.conf");
++    CHECK(cmd.size() == 5 && cmd[2] == "/usr/bin/Hyprland" && cmd[4] == "/x.conf");
++
++    auto nested = HyprlandEnv(CompositorMode::HyprlandNested, "wayland-0");
++    auto headless = HyprlandEnv(CompositorMode::HyprlandHeadless, "wayland-0");
++    auto has = [](const std::vector<std::string>& v, const char* s) {
++        for (auto& e : v) if (e == s) return true;
++        return false;
++    };
++    CHECK(has(nested, "WAYLAND_DISPLAY=wayland-0"));
++    CHECK(!has(headless, "WAYLAND_DISPLAY=wayland-0"));
++    CHECK(has(headless, "XDG_CURRENT_DESKTOP=Hyprland"));
++
++    if (failures == 0) std::puts("compositor_test: all checks passed");
++    return failures ? EXIT_FAILURE : EXIT_SUCCESS;
++}
+diff --git a/config/hyprland-headless.lua b/config/hyprland-headless.lua
+new file mode 100644
+index 0000000..14be520
+--- /dev/null
++++ b/config/hyprland-headless.lua
+@@ -0,0 +1,8 @@
++-- BunOS: Hyprland on aquamarine's headless backend. It needs a DRM render node for the GBM
++-- allocator; no RDP bridge exists yet, so the output is only reachable through screencopy
++-- (grim/wayvnc) from inside the system distro.
++hl.on("hyprland.start", function ()
++    hl.exec_cmd("hyprctl output create headless")
++end)
++
++hl.env("XDG_CURRENT_DESKTOP", "Hyprland")
+diff --git a/config/hyprland-nested.lua b/config/hyprland-nested.lua
+new file mode 100644
+index 0000000..04c39ec
+--- /dev/null
++++ b/config/hyprland-nested.lua
+@@ -0,0 +1,13 @@
++-- BunOS: Hyprland nested in WSLg's Weston (aquamarine wayland backend).
++-- Written for the Hyprland 0.57 Lua config API (example/hyprland.lua of v0.57.0).
++-- Needs a compositor offering xdg_wm_base v6, wl_compositor v6, zwp_linux_dmabuf_v1 v4 and a
++-- DRM render node; the stock WSLg Weston 9.0.0 offers none of that (docs/BUNOS-PATCHES.md).
++hl.monitor({
++    output   = "",
++    mode     = "preferred",
++    position = "auto",
++    scale    = "1",
++})
++
++hl.env("XCURSOR_SIZE", "16")
++hl.env("XDG_CURRENT_DESKTOP", "Hyprland")

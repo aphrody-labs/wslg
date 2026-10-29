@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 05:31:45 +0100
+Subject: [PATCH 08/13] bunos: hyprland-protocols builds with cmake; Xwayland
+ meson options filtered per tag
+
+---
+ bunos/Dockerfile | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/bunos/Dockerfile b/bunos/Dockerfile
+index ccb4430..d57037d 100644
+--- a/bunos/Dockerfile
++++ b/bunos/Dockerfile
+@@ -43,9 +43,11 @@ RUN . /opt/bunos/versions.env \
+  && pacman -S --noconfirm --needed --asdeps $(bash /opt/bunos/deps/list.sh xorg-xwayland) \
+  && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
+  && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
+- && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release \
+-      -Dxvfb=false -Dxdmcp=false -Dsecure-rpc=false -Dxwayland_ei=false \
+-      -Ddocs=false -Ddevel-docs=false -Ddocs-pdf=false \
++ && opts="" \
++ && for o in xvfb=false xdmcp=false secure-rpc=false xwayland_ei=false docs=false devel-docs=false docs-pdf=false; do \
++      grep -q "option('${o%%=*}'" xserver/meson_options.txt && opts="$opts -D$o"; done \
++ && echo "xserver meson options: $opts" \
++ && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release $opts \
+  && ninja -C xserver/build install
+ 
+ # ---------------------------------------------------------------- Weston
+@@ -78,8 +80,7 @@ RUN . /opt/bunos/versions.env \
+            && cmake --build "$1/build" -j"$(nproc)" && cmake --install "$1/build"; } \
+  && clone hyprwayland-scanner "$HYPRWAYLAND_SCANNER_TAG" "$HYPRWAYLAND_SCANNER_SHA" && cm hyprwayland-scanner \
+  && clone hyprland-protocols "$HYPRLAND_PROTOCOLS_TAG" "$HYPRLAND_PROTOCOLS_SHA" \
+- && meson setup hyprland-protocols/build hyprland-protocols --prefix=/usr/local --libdir=lib \
+- && ninja -C hyprland-protocols/build install \
++ && cm hyprland-protocols \
+  && clone hyprutils "$HYPRUTILS_TAG" "$HYPRUTILS_SHA" && cm hyprutils \
+  && clone hyprlang "$HYPRLANG_TAG" "$HYPRLANG_SHA" && cm hyprlang \
+  && clone hyprcursor "$HYPRCURSOR_TAG" "$HYPRCURSOR_SHA" && cm hyprcursor \

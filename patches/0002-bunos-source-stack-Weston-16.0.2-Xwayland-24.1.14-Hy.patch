@@ -1,0 +1,688 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 05:19:15 +0100
+Subject: [PATCH 02/13] bunos: source stack (Weston 16.0.2, Xwayland 24.1.14,
+ Hyprland 0.57.0 chain) and headless protocol probes
+
+Arch-based Dockerfile building the pinned tags in bunos/versions.env, an aquamarine
+patch that binds wl_seat/xdg_wm_base/wl_compositor at min(advertised, wanted), probe
+scripts (wayland-info, xdpyinfo, weston-simple-shm, hyprctl when a DRM render node
+exists), the aquamarine requirement table and a static extractor with its output for
+Weston 9.0.0 (microsoft/weston-mirror working) and 16.0.2.
+---
+ .gitattributes                                |   4 +
+ bunos/Dockerfile                              |  84 ++++++++
+ bunos/arch-deps.sh                            |  13 ++
+ bunos/check-versions.sh                       |  25 +++
+ bunos/evidence/extract-weston-globals.py      |  30 +++
+ bunos/evidence/weston-16.0.2-globals.json     |  41 ++++
+ .../weston-mirror-working-globals.json        |  35 ++++
+ ...ine-0001-wayland-clamp-bind-versions.patch |  34 +++
+ bunos/probes/aquamarine-requirements.json     |  13 ++
+ bunos/probes/checklist.json                   |  35 ++++
+ bunos/probes/compat.py                        |  17 ++
+ bunos/probes/globals.py                       |  10 +
+ bunos/probes/run-probes.sh                    | 194 ++++++++++++++++++
+ bunos/versions.env                            |  27 +++
+ 14 files changed, 562 insertions(+)
+ create mode 100644 .gitattributes
+ create mode 100644 bunos/Dockerfile
+ create mode 100644 bunos/arch-deps.sh
+ create mode 100644 bunos/check-versions.sh
+ create mode 100644 bunos/evidence/extract-weston-globals.py
+ create mode 100644 bunos/evidence/weston-16.0.2-globals.json
+ create mode 100644 bunos/evidence/weston-mirror-working-globals.json
+ create mode 100644 bunos/patches/aquamarine-0001-wayland-clamp-bind-versions.patch
+ create mode 100644 bunos/probes/aquamarine-requirements.json
+ create mode 100644 bunos/probes/checklist.json
+ create mode 100644 bunos/probes/compat.py
+ create mode 100644 bunos/probes/globals.py
+ create mode 100644 bunos/probes/run-probes.sh
+ create mode 100644 bunos/versions.env
+
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..8a96832
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1,4 @@
++bunos/** text eol=lf
++*.sh text eol=lf
++config/*.lua text eol=lf
++WSLGd/Compositor.h text eol=lf
+diff --git a/bunos/Dockerfile b/bunos/Dockerfile
+new file mode 100644
+index 0000000..d547511
+--- /dev/null
++++ b/bunos/Dockerfile
+@@ -0,0 +1,84 @@
++# syntax=docker/dockerfile:1.7
++# BunOS source stack: newest Weston, Xwayland (xwayland-shell) and the Hyprland chain at the
++# tags pinned in versions.env, on Arch Linux. Used to probe protocol coverage and to carry the
++# compositor binaries that the WSLg system distro does not have. Build context: the repository root (docker build -f bunos/Dockerfile .)
++ARG ARCH_IMAGE=docker.io/library/archlinux:base-devel
++
++FROM ${ARCH_IMAGE} AS base
++RUN pacman -Syu --noconfirm --needed \
++      git meson ninja cmake pkgconf python python-mako curl \
++      wayland wayland-protocols libxkbcommon pixman libinput libevdev mtdev \
++      cairo pango libpng libjpeg-turbo libwebp freerdp libdrm mesa libglvnd \
++      libxcb xcb-util-cursor libxcursor lcms2 libxml2 xorgproto libxcvt \
++      wayland-utils xorg-xdpyinfo xorg-xwininfo xorg-xprop procps-ng \
++ && pacman -Scc --noconfirm
++ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig \
++    LD_LIBRARY_PATH=/usr/local/lib \
++    PATH=/usr/local/bin:/usr/bin:/bin
++COPY bunos/arch-deps.sh bunos/versions.env /opt/bunos/
++COPY bunos/patches/ /opt/bunos/patches/
++WORKDIR /src
++
++# ---------------------------------------------------------------- Xwayland (xwayland-shell)
++FROM base AS xwayland
++RUN . /opt/bunos/versions.env \
++ && pacman -S --noconfirm --needed --asdeps $(/opt/bunos/arch-deps.sh xorg-xwayland) \
++ && git clone --depth 1 -b "${XWAYLAND_TAG}" https://gitlab.freedesktop.org/xorg/xserver.git xserver \
++ && test "$(git -C xserver rev-parse HEAD)" = "${XWAYLAND_SHA}" \
++ && meson setup xserver/build xserver --prefix=/usr/local --libdir=lib --buildtype=release \
++      -Dxvfb=false -Dxdmcp=false -Dsecure-rpc=false -Dxwayland_ei=false \
++      -Ddocs=false -Ddevel-docs=false -Ddocs-pdf=false \
++ && ninja -C xserver/build install
++
++# ---------------------------------------------------------------- Weston
++FROM xwayland AS weston
++RUN . /opt/bunos/versions.env \
++ && git clone --depth 1 -b "${WESTON_TAG}" https://gitlab.freedesktop.org/wayland/weston.git weston \
++ && test "$(git -C weston rev-parse HEAD)" = "${WESTON_SHA}" \
++ && meson setup weston/build weston --prefix=/usr/local --libdir=lib --buildtype=release \
++      -Dbackend-headless=true -Dbackend-rdp=true -Dbackend-drm=false -Dbackend-wayland=false \
++      -Dbackend-pipewire=false -Dbackend-vnc=false -Dbackend-default=headless \
++      -Drenderer-gl=true -Drenderer-vulkan=false \
++      -Dxwayland=true -Dxwayland-path=/usr/local/bin/Xwayland \
++      -Dshell-desktop=true -Dshell-ivi=false -Dshell-kiosk=false -Dshell-lua=false \
++      -Dsystemd=false -Dcolor-management-lcms=false -Dimage-jpeg=true -Dimage-webp=false \
++      -Dpipewire=false -Ddeprecated-pipewire=false -Ddeprecated-remoting=false \
++      -Dsimple-clients=shm,egl,damage -Dtools=info -Ddemo-clients=false \
++      -Dtests=false -Ddoc=false \
++ && ninja -C weston/build install
++
++# ---------------------------------------------------------------- Hyprland chain
++FROM weston AS hyprland
++RUN . /opt/bunos/versions.env \
++ && pacman -S --noconfirm --needed --asdeps \
++      $(/opt/bunos/arch-deps.sh hyprland aquamarine hyprcursor hyprgraphics hyprlang hyprutils hyprwayland-scanner) \
++ && clone() { git clone --depth 1 -b "$2" "https://github.com/hyprwm/$1.git" "$1" \
++              && test "$(git -C "$1" rev-parse HEAD)" = "$3"; } \
++ && cm() { cmake -S "$1" -B "$1/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
++              -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib "${@:2}" \
++           && cmake --build "$1/build" -j"$(nproc)" && cmake --install "$1/build"; } \
++ && clone hyprwayland-scanner "$HYPRWAYLAND_SCANNER_TAG" "$HYPRWAYLAND_SCANNER_SHA" && cm hyprwayland-scanner \
++ && clone hyprland-protocols "$HYPRLAND_PROTOCOLS_TAG" "$HYPRLAND_PROTOCOLS_SHA" \
++ && meson setup hyprland-protocols/build hyprland-protocols --prefix=/usr/local --libdir=lib \
++ && ninja -C hyprland-protocols/build install \
++ && clone hyprutils "$HYPRUTILS_TAG" "$HYPRUTILS_SHA" && cm hyprutils \
++ && clone hyprlang "$HYPRLANG_TAG" "$HYPRLANG_SHA" && cm hyprlang \
++ && clone hyprcursor "$HYPRCURSOR_TAG" "$HYPRCURSOR_SHA" && cm hyprcursor \
++ && clone hyprgraphics "$HYPRGRAPHICS_TAG" "$HYPRGRAPHICS_SHA" && cm hyprgraphics \
++ && clone aquamarine "$AQUAMARINE_TAG" "$AQUAMARINE_SHA" \
++ && git -C aquamarine apply /opt/bunos/patches/aquamarine-*.patch && cm aquamarine \
++ && ldconfig \
++ && git clone --depth 1 -b "$HYPRLAND_TAG" https://github.com/hyprwm/Hyprland.git Hyprland \
++ && test "$(git -C Hyprland rev-parse HEAD)" = "$HYPRLAND_SHA" \
++ && cm Hyprland -DNO_TESTS=ON -DNO_HYPRPM=ON -DNO_UWSM=ON -DNO_SYSTEMD=ON -DBUILD_TESTING=OFF \
++ && ldconfig
++
++# ---------------------------------------------------------------- probes
++FROM hyprland AS probes
++RUN pacman -S --noconfirm --needed wlr-randr grim python \
++ && pacman -Scc --noconfirm
++COPY bunos/probes/ /opt/bunos/probes/
++COPY config/hyprland-nested.lua config/hyprland-headless.lua /etc/wslg/
++RUN useradd -m probe && chmod +x /opt/bunos/probes/*.sh
++USER probe
++ENTRYPOINT ["/opt/bunos/probes/run-probes.sh"]
+diff --git a/bunos/arch-deps.sh b/bunos/arch-deps.sh
+new file mode 100644
+index 0000000..5f2c584
+--- /dev/null
++++ b/bunos/arch-deps.sh
+@@ -0,0 +1,13 @@
++#!/usr/bin/env bash
++# Print the depends + makedepends of Arch packages (bare names, no version operators),
++# read from the packaging repo's PKGBUILD. Packages named on the command line that start
++# with an excluded prefix are dropped so the pinned source builds replace them.
++# usage: arch-deps.sh hyprland aquamarine ...
++set -euo pipefail
++for pkg in "$@"; do
++  f=$(mktemp)
++  curl -fsSL "https://gitlab.archlinux.org/archlinux/packaging/packages/${pkg}/-/raw/main/PKGBUILD" -o "$f"
++  # Sourcing in a subshell: PKGBUILDs only define arrays/functions at top level.
++  ( set +eu; source "$f" >/dev/null 2>&1; printf '%s\n' "${depends[@]}" "${makedepends[@]}" )
++  rm -f "$f"
++done | sed -E 's/[<>=:].*$//' | grep -vE '^(hypr|aquamarine$|xorg-xwayland$|weston$)' | grep -v '^$' | sort -u
+diff --git a/bunos/check-versions.sh b/bunos/check-versions.sh
+new file mode 100644
+index 0000000..6618046
+--- /dev/null
++++ b/bunos/check-versions.sh
+@@ -0,0 +1,25 @@
++#!/usr/bin/env bash
++# Verify that every pin in versions.env still resolves to the recorded SHA on its upstream.
++# Network needed. Exit 1 on any mismatch.  usage: bunos/check-versions.sh
++set -euo pipefail
++cd "$(dirname "$0")"
++. ./versions.env
++declare -A URL=(
++  [WESTON]=https://gitlab.freedesktop.org/wayland/weston.git
++  [XWAYLAND]=https://gitlab.freedesktop.org/xorg/xserver.git
++  [HYPRLAND]=https://github.com/hyprwm/Hyprland.git
++  [AQUAMARINE]=https://github.com/hyprwm/aquamarine.git
++  [HYPRUTILS]=https://github.com/hyprwm/hyprutils.git
++  [HYPRLANG]=https://github.com/hyprwm/hyprlang.git
++  [HYPRCURSOR]=https://github.com/hyprwm/hyprcursor.git
++  [HYPRGRAPHICS]=https://github.com/hyprwm/hyprgraphics.git
++  [HYPRWAYLAND_SCANNER]=https://github.com/hyprwm/hyprwayland-scanner.git
++  [HYPRLAND_PROTOCOLS]=https://github.com/hyprwm/hyprland-protocols.git
++)
++rc=0
++for k in "${!URL[@]}"; do
++  tag=${k}_TAG; sha=${k}_SHA
++  got=$(git ls-remote "${URL[$k]}" "refs/tags/${!tag}^{}" "refs/tags/${!tag}" | tail -1 | cut -f1)
++  if [ "$got" = "${!sha}" ]; then echo "ok   $k ${!tag} ${got:0:12}"; else echo "FAIL $k ${!tag} expected ${!sha} got ${got:-none}"; rc=1; fi
++done
++exit $rc
+diff --git a/bunos/evidence/extract-weston-globals.py b/bunos/evidence/extract-weston-globals.py
+new file mode 100644
+index 0000000..d4c6c20
+--- /dev/null
++++ b/bunos/evidence/extract-weston-globals.py
+@@ -0,0 +1,30 @@
++#!/usr/bin/env python3
++"""Static extraction of the wl_global_create() interfaces and versions of a Weston source tree.
++usage: extract-weston-globals.py <weston-checkout> <label> > globals.json
++Versions are resolved when they are an integer literal, a #define in the same file or
++MIN(x.version, N). Anything else is reported as a string (e.g. "max_version" = runtime choice)."""
++import json, os, re, subprocess, sys
++
++root, label = sys.argv[1], sys.argv[2]
++call = re.compile(r'wl_global_create\s*\(\s*[\w>\-\.]+\s*,\s*&(\w+)_interface\s*,\s*((?:MIN\s*\([^)]*\)|[\w]+))', re.S)
++out = {}
++for d, _, files in os.walk(root):
++    parts = d.split(os.sep)
++    if '.git' in parts or 'tests' in parts:
++        continue
++    for f in files:
++        if not f.endswith('.c'):
++            continue
++        p = os.path.join(d, f)
++        s = open(p, errors='ignore').read()
++        defs = dict(re.findall(r'#\s*define\s+(\w+)\s+(\d+)\b', s))
++        for m in call.finditer(s):
++            iface, v = m.group(1), re.sub(r'\s+', ' ', m.group(2))
++            mm = re.match(r'MIN\s*\(.*,\s*(\d+)\s*\)', v)
++            if mm:
++                v = mm.group(1)
++            v = defs.get(v, v)
++            out[iface] = int(v) if v.isdigit() else v
++sha = subprocess.run(['git', '-C', root, 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()
++json.dump({'label': label, 'commit': sha, 'globals': dict(sorted(out.items()))}, sys.stdout, indent=1)
++print()
+diff --git a/bunos/evidence/weston-16.0.2-globals.json b/bunos/evidence/weston-16.0.2-globals.json
+new file mode 100644
+index 0000000..4ad4578
+--- /dev/null
++++ b/bunos/evidence/weston-16.0.2-globals.json
+@@ -0,0 +1,41 @@
++{
++ "label": "wayland/weston 16.0.2 (static; wl_output/xdg versions resolved from source)",
++ "commit": "530ae6c769d2fd55ea5157542654810be81a3193",
++ "globals": {
++  "ivi_application": 1,
++  "ivi_hmi_controller": 1,
++  "weston_capture_v1": 2,
++  "weston_content_protection": 1,
++  "weston_debug_v1": 1,
++  "weston_desktop_shell": 1,
++  "weston_direct_display_v1": 1,
++  "weston_touch_calibration": 1,
++  "wl_compositor": 5,
++  "wl_data_device_manager": 3,
++  "wl_output": 4,
++  "wl_seat": 7,
++  "wl_subcompositor": 1,
++  "wp_alpha_modifier_v1": "version",
++  "wp_color_manager_v1": "version",
++  "wp_color_representation_manager_v1": "version",
++  "wp_commit_timing_manager_v1": 1,
++  "wp_fifo_manager_v1": 1,
++  "wp_presentation": 2,
++  "wp_single_pixel_buffer_manager_v1": 1,
++  "wp_tearing_control_manager_v1": 1,
++  "wp_viewporter": 1,
++  "xdg_wm_base": 5,
++  "xwayland_shell_v1": 1,
++  "zwp_input_method_v1": 1,
++  "zwp_input_panel_v1": 1,
++  "zwp_input_timestamps_manager_v1": 1,
++  "zwp_linux_dmabuf_v1": "max_version",
++  "zwp_linux_explicit_synchronization_v1": 2,
++  "zwp_pointer_constraints_v1": 1,
++  "zwp_relative_pointer_manager_v1": 1,
++  "zwp_tablet_manager_v2": 1,
++  "zwp_text_input_manager_v1": 1,
++  "zxdg_output_manager_v1": 2,
++  "zxdg_shell_v6": 1
++ }
++}
+diff --git a/bunos/evidence/weston-mirror-working-globals.json b/bunos/evidence/weston-mirror-working-globals.json
+new file mode 100644
+index 0000000..92e87c7
+--- /dev/null
++++ b/bunos/evidence/weston-mirror-working-globals.json
+@@ -0,0 +1,35 @@
++{
++ "label": "microsoft/weston-mirror working (WSLg Weston 9.0.0 + RDP/RAIL), compositor-side globals",
++ "commit": "7fbf69314f8a74450c265650232f66f59a4e0630",
++ "globals": {
++  "ivi_application": 1,
++  "ivi_hmi_controller": 1,
++  "weston_content_protection": 1,
++  "weston_debug_v1": 1,
++  "weston_desktop_shell": 1,
++  "weston_direct_display_v1": 1,
++  "weston_rdprail_shell": 1,
++  "weston_screenshooter": 1,
++  "weston_touch_calibration": 1,
++  "wl_compositor": 4,
++  "wl_data_device_manager": 3,
++  "wl_output": 3,
++  "wl_seat": 7,
++  "wl_shell": 1,
++  "wl_subcompositor": 1,
++  "wp_presentation": 1,
++  "wp_viewporter": 1,
++  "xdg_wm_base": 1,
++  "zwp_fullscreen_shell_v1": 1,
++  "zwp_input_method_v1": 1,
++  "zwp_input_panel_v1": 1,
++  "zwp_input_timestamps_manager_v1": 1,
++  "zwp_linux_dmabuf_v1": 3,
++  "zwp_linux_explicit_synchronization_v1": 2,
++  "zwp_pointer_constraints_v1": 1,
++  "zwp_relative_pointer_manager_v1": 1,
++  "zwp_text_input_manager_v1": 1,
++  "zxdg_output_manager_v1": 2,
++  "zxdg_shell_v6": 1
++ }
++}
+diff --git a/bunos/patches/aquamarine-0001-wayland-clamp-bind-versions.patch b/bunos/patches/aquamarine-0001-wayland-clamp-bind-versions.patch
+new file mode 100644
+index 0000000..8893651
+--- /dev/null
++++ b/bunos/patches/aquamarine-0001-wayland-clamp-bind-versions.patch
+@@ -0,0 +1,34 @@
++From: aphrody-dev <contact@aphrody.com>
++Subject: [PATCH] wayland backend: bind wl_seat/xdg_wm_base/wl_compositor at min(advertised, wanted)
++
++aquamarine v0.15.1 binds wl_seat v9, xdg_wm_base v6 and wl_compositor v6
++unconditionally (src/backend/Wayland.cpp registry handler). libwayland rejects a bind
++above the advertised version, so hosts that advertise less (Weston 16.0.2: wl_seat 7,
++xdg_wm_base 5, wl_compositor 5; WSLg Weston 9.0.0: 7/1/4) can never be used as a host.
++Clamp to the advertised version. zwp_linux_dmabuf_v1 stays at 4 on purpose: the
++backend calls get_default_feedback, which does not exist below v4.
++
++---
++diff --git a/src/backend/Wayland.cpp b/src/backend/Wayland.cpp
++index 8905adc..611b011 100644
++--- a/src/backend/Wayland.cpp
+++++ b/src/backend/Wayland.cpp
++@@ -118,15 +118,15 @@ bool Aquamarine::CWaylandBackend::start() {
++ 
++         if (NAME == "wl_seat") {
++             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 9, id)));
++-            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, 9));
+++            waylandState.seat = makeShared<CCWlSeat>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_seat_interface, std::min<uint32_t>(version, 9)));
++             initSeat();
++         } else if (NAME == "xdg_wm_base") {
++             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
++-            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, 6));
+++            waylandState.xdg = makeShared<CCXdgWmBase>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &xdg_wm_base_interface, std::min<uint32_t>(version, 6)));
++             initShell();
++         } else if (NAME == "wl_compositor") {
++             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 6, id)));
++-            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, 6));
+++            waylandState.compositor = makeShared<CCWlCompositor>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_compositor_interface, std::min<uint32_t>(version, 6)));
++         } else if (NAME == "wl_shm") {
++             TRACE(backend->log(AQ_LOG_TRACE, std::format("  > binding to global: {} (version {}) with id {}", name, 1, id)));
++             waylandState.shm = makeShared<CCWlShm>((wl_proxy*)wl_registry_bind((wl_registry*)waylandState.registry->resource(), id, &wl_shm_interface, 1));
+diff --git a/bunos/probes/aquamarine-requirements.json b/bunos/probes/aquamarine-requirements.json
+new file mode 100644
+index 0000000..54e106c
+--- /dev/null
++++ b/bunos/probes/aquamarine-requirements.json
+@@ -0,0 +1,13 @@
++{
++  "source": "hyprwm/aquamarine v0.15.1 src/backend/Wayland.cpp CWaylandBackend::start() registry handler and the missing-protocols check",
++  "required": {
++    "wl_seat": 9,
++    "xdg_wm_base": 6,
++    "wl_compositor": 6,
++    "wl_shm": 1,
++    "zwp_linux_dmabuf_v1": 4
++  },
++  "clampable": ["wl_seat", "xdg_wm_base", "wl_compositor"],
++  "clampable_note": "bunos/patches/aquamarine-0001 binds these at min(advertised, wanted); dmabuf v4 (get_default_feedback) cannot be clamped",
++  "also_needs": "a DRM render node: CBackend::start() builds a GBM allocator from the backend's drmFD (src/backend/Backend.cpp), and the wayland backend gets the node from dmabuf feedback main_device"
++}
+diff --git a/bunos/probes/checklist.json b/bunos/probes/checklist.json
+new file mode 100644
+index 0000000..4acffb2
+--- /dev/null
++++ b/bunos/probes/checklist.json
+@@ -0,0 +1,35 @@
++{
++  "note": "Globals a modern desktop expects; value is the minimum version counted as covered. Used for the before/after matrix.",
++  "globals": {
++    "wl_compositor": 6, "wl_seat": 9, "wl_output": 4, "wl_data_device_manager": 3,
++    "xdg_wm_base": 6,
++    "zxdg_decoration_manager_v1": 1,
++    "zwlr_layer_shell_v1": 4,
++    "wp_fractional_scale_manager_v1": 1,
++    "wp_viewporter": 1,
++    "zwp_linux_dmabuf_v1": 5,
++    "wp_presentation": 2,
++    "zwp_text_input_manager_v3": 1,
++    "zwp_input_method_manager_v2": 1,
++    "zwp_pointer_constraints_v1": 1,
++    "zwp_relative_pointer_manager_v1": 1,
++    "zwp_idle_inhibit_manager_v1": 1,
++    "zwp_primary_selection_device_manager_v1": 1,
++    "ext_session_lock_manager_v1": 1,
++    "xwayland_shell_v1": 1,
++    "wp_cursor_shape_manager_v1": 1,
++    "xdg_activation_v1": 1,
++    "ext_foreign_toplevel_list_v1": 1,
++    "zwlr_foreign_toplevel_manager_v1": 3,
++    "zwlr_output_manager_v1": 4,
++    "zwlr_screencopy_manager_v1": 3,
++    "ext_idle_notifier_v1": 1,
++    "wp_security_context_manager_v1": 1,
++    "zwp_pointer_gestures_v1": 3,
++    "zwp_tablet_manager_v2": 1,
++    "wp_single_pixel_buffer_manager_v1": 1,
++    "wp_content_type_manager_v1": 1,
++    "wp_tearing_control_manager_v1": 1,
++    "zxdg_output_manager_v1": 3
++  }
++}
+diff --git a/bunos/probes/compat.py b/bunos/probes/compat.py
+new file mode 100644
+index 0000000..edcac4b
+--- /dev/null
++++ b/bunos/probes/compat.py
+@@ -0,0 +1,17 @@
++#!/usr/bin/env python3
++"""Compare a globals JSON (globals.py output) with a requirements/checklist JSON.
++usage: compat.py aquamarine <globals.json> <aquamarine-requirements.json>
++       compat.py checklist  <globals.json> <checklist.json>
++Prints a TSV of name, required, offered, verdict. Exit 0 always; verdicts are data."""
++import json, sys
++mode, gpath, rpath = sys.argv[1:4]
++g = json.load(open(gpath))
++r = json.load(open(rpath))
++want = r["required"] if mode == "aquamarine" else r["globals"]
++fails = 0
++for name, v in want.items():
++    got = g.get(name, 0)
++    ok = got >= v
++    fails += 0 if ok else 1
++    print(f"{name}\t{v}\t{got if got else '-'}\t{'ok' if ok else 'MISSING' if not got else 'TOO_OLD'}")
++print(f"#missing_or_old\t{fails}\t{len(want)}")
+diff --git a/bunos/probes/globals.py b/bunos/probes/globals.py
+new file mode 100644
+index 0000000..8f39db8
+--- /dev/null
++++ b/bunos/probes/globals.py
+@@ -0,0 +1,10 @@
++#!/usr/bin/env python3
++"""Parse `wayland-info` output into {interface: version} JSON.  usage: globals.py < wayland-info.txt"""
++import json, re, sys
++out = {}
++for line in sys.stdin:
++    m = re.match(r"\s*interface:\s*'([^']+)',\s*version:\s*(\d+)", line)
++    if m:
++        out[m.group(1)] = int(m.group(2))
++json.dump(dict(sorted(out.items())), sys.stdout, indent=1)
++print()
+diff --git a/bunos/probes/run-probes.sh b/bunos/probes/run-probes.sh
+new file mode 100644
+index 0000000..5f7b221
+--- /dev/null
++++ b/bunos/probes/run-probes.sh
+@@ -0,0 +1,194 @@
++#!/usr/bin/env bash
++# BunOS protocol / compositor probes. Runs headless in the bunos image, needs no WSL and no GPU.
++# Writes $OUT/report.tsv (name<TAB>status<TAB>detail), logs and JSON next to it.
++# status is one of: pass, fail, skipped. Nothing is reported as pass unless the command ran.
++set -u
++OUT=${OUT:-/out}
++mkdir -p "$OUT"
++HERE=$(cd "$(dirname "$0")" && pwd)
++REPORT=$OUT/report.tsv
++: >"$REPORT"
++rec() { printf '%s\t%s\t%s\n' "$1" "$2" "$3" | tee -a "$REPORT" >&2; }
++
++export XDG_RUNTIME_DIR=$(mktemp -d); chmod 700 "$XDG_RUNTIME_DIR"
++unset WAYLAND_DISPLAY DISPLAY
++PIDS=()
++cleanup() {
++  for p in "${PIDS[@]:-}"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done
++  pkill -u "$(id -u)" Xwayland 2>/dev/null
++  true
++}
++trap cleanup EXIT
++
++wait_socket() { # name seconds
++  local i
++  for ((i = 0; i < $2 * 10; i++)); do
++    [ -S "$XDG_RUNTIME_DIR/$1" ] && return 0
++    sleep 0.1
++  done
++  return 1
++}
++globals_of() { # display name
++  WAYLAND_DISPLAY=$1 wayland-info 2>"$OUT/$2.err" | tee "$OUT/$2.txt" | python3 "$HERE/globals.py" >"$OUT/$2.json"
++}
++json_has() { python3 -c "import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1])) else 1)" "$1" "$2"; }
++
++# ---- P0 versions -----------------------------------------------------------------------
++{
++  echo "weston: $(weston --version 2>&1)"
++  echo "Xwayland: $(Xwayland -version 2>&1 | head -1) path=$(command -v Xwayland)"
++  echo "Hyprland: $(Hyprland --version 2>&1 | head -2 | tr '\n' ' ')"
++  for m in aquamarine hyprutils hyprlang hyprcursor hyprgraphics wayland-server wayland-protocols freerdp3 egl; do
++    echo "$m: $(pkg-config --modversion $m 2>&1)"
++  done
++  echo "kernel: $(uname -sr)"
++} >"$OUT/versions.txt" 2>&1
++if command -v weston >/dev/null; then rec versions pass "see versions.txt"; else rec versions fail "weston missing"; fi
++
++# ---- P1 weston 16 headless, pixman renderer, Xwayland ----------------------------------
++weston --backend=headless --renderer=pixman --socket=bunos-pixman --width=1280 --height=720 \
++  --xwayland --log="$OUT/weston-pixman.log" >"$OUT/weston-pixman.stdout" 2>&1 &
++WPID=$!
++PIDS+=("$WPID")
++if wait_socket bunos-pixman 20; then
++  globals_of bunos-pixman wayland-info-weston16-pixman
++  n=$(python3 -c "import json;print(len(json.load(open('$OUT/wayland-info-weston16-pixman.json'))))")
++  if [ "$n" -gt 5 ]; then rec weston16-headless-pixman pass "$n globals"; else rec weston16-headless-pixman fail "only $n globals"; fi
++else
++  rec weston16-headless-pixman fail "socket never appeared; see weston-pixman.log"
++fi
++
++# ---- P2 Xwayland rootless + xwayland-shell ---------------------------------------------
++disp=$(grep -o 'xserver listening on display :[0-9]*' "$OUT/weston-pixman.log" 2>/dev/null | grep -o ':[0-9]*$' | head -1)
++if [ -n "${disp:-}" ]; then
++  timeout 20 xdpyinfo -display "$disp" >"$OUT/xdpyinfo.txt" 2>&1
++  rc=$?
++  if [ $rc -eq 0 ]; then
++    rec xwayland-xdpyinfo pass "display $disp: $(grep -m1 'vendor release number' "$OUT/xdpyinfo.txt" | tr -s ' ')"
++  else
++    rec xwayland-xdpyinfo fail "xdpyinfo rc=$rc"
++  fi
++  args=$(pgrep -u "$(id -u)" -a Xwayland | head -1)
++  echo "$args" >"$OUT/xwayland-cmdline.txt"
++  case "$args" in
++    *-rootless*) rec xwayland-rootless pass "$args" ;;
++    *) rec xwayland-rootless fail "${args:-no Xwayland process}" ;;
++  esac
++  globals_of bunos-pixman wayland-info-weston16-pixman-after-x
++  if json_has "$OUT/wayland-info-weston16-pixman-after-x.json" xwayland_shell_v1; then
++    rec xwayland-shell-v1 pass "global offered after Xwayland started"
++  else
++    rec xwayland-shell-v1 fail "xwayland_shell_v1 not offered"
++  fi
++else
++  rec xwayland-xdpyinfo fail "weston did not log an X display"
++  rec xwayland-rootless skipped "no X display"
++  rec xwayland-shell-v1 skipped "no X display"
++fi
++
++# ---- P3 client: weston-simple-shm ------------------------------------------------------
++WAYLAND_DISPLAY=bunos-pixman timeout 4 weston-simple-shm >"$OUT/simple-shm.log" 2>&1
++rc=$?
++if [ $rc -eq 124 ]; then rec weston-simple-shm pass "client stayed connected for 4 s"; else rec weston-simple-shm fail "rc=$rc: $(head -c 200 "$OUT/simple-shm.log")"; fi
++
++# ---- P4 compat tables (data, computed from the live globals) ---------------------------
++f=wayland-info-weston16-pixman-after-x
++if [ -s "$OUT/$f.json" ]; then
++  python3 "$HERE/compat.py" aquamarine "$OUT/$f.json" "$HERE/aquamarine-requirements.json" >"$OUT/aquamarine-compat-weston16.tsv"
++  python3 "$HERE/compat.py" checklist "$OUT/$f.json" "$HERE/checklist.json" >"$OUT/checklist-weston16.tsv"
++  rec compat-tables pass "tables written; $(tail -1 "$OUT/aquamarine-compat-weston16.tsv" | tr '\t' ' ') (aquamarine)"
++else
++  rec compat-tables fail "no globals JSON"
++fi
++kill "$WPID" 2>/dev/null
++wait "$WPID" 2>/dev/null
++pkill -u "$(id -u)" Xwayland 2>/dev/null
++
++# ---- P5 weston 16 headless, GL renderer (EGL surfaceless) ------------------------------
++weston --backend=headless --renderer=gl --socket=bunos-gl --width=1280 --height=720 \
++  --log="$OUT/weston-gl.log" >"$OUT/weston-gl.stdout" 2>&1 &
++GPID=$!
++PIDS+=("$GPID")
++if wait_socket bunos-gl 20; then
++  globals_of bunos-gl wayland-info-weston16-gl
++  dv=$(python3 -c "import json;print(json.load(open('$OUT/wayland-info-weston16-gl.json')).get('zwp_linux_dmabuf_v1','-'))")
++  rec weston16-headless-gl pass "zwp_linux_dmabuf_v1 version $dv"
++else
++  rec weston16-headless-gl fail "$(grep -h -m1 -i 'error\|fail' "$OUT/weston-gl.log" "$OUT/weston-gl.stdout" 2>/dev/null | head -1)"
++fi
++
++# ---- P6 upstream rdp-backend smoke (full desktop, no RAIL) -----------------------------
++openssl req -x509 -newkey rsa:2048 -nodes -keyout "$OUT/rdp.key" -out "$OUT/rdp.crt" -days 1 -subj /CN=bunos >/dev/null 2>&1
++weston --backend=rdp --renderer=pixman --socket=bunos-rdp --port=33890 \
++  --rdp-tls-key="$OUT/rdp.key" --rdp-tls-cert="$OUT/rdp.crt" \
++  --log="$OUT/weston-rdp.log" >"$OUT/weston-rdp.stdout" 2>&1 &
++RPID=$!
++PIDS+=("$RPID")
++sleep 3
++if (exec 3<>/dev/tcp/127.0.0.1/33890) 2>/dev/null; then
++  rec weston16-rdp-backend pass "listens on 127.0.0.1:33890 (FreeRDP $(pkg-config --modversion freerdp3 2>/dev/null))"
++else
++  rec weston16-rdp-backend fail "port 33890 closed; $(grep -h -m1 -i 'error\|fail' "$OUT/weston-rdp.log" "$OUT/weston-rdp.stdout" 2>/dev/null | head -1)"
++fi
++kill "$RPID" 2>/dev/null
++
++# ---- P7 Hyprland binaries --------------------------------------------------------------
++if out=$(Hyprland --version 2>&1) && [ -n "$out" ]; then rec hyprland-binary pass "$(echo "$out" | head -1)"; else rec hyprland-binary fail "Hyprland --version failed"; fi
++if hyprctl --version >/dev/null 2>&1; then rec hyprctl-binary pass "$(hyprctl --version 2>&1 | head -1)"; else rec hyprctl-binary fail "hyprctl --version failed"; fi
++
++# ---- P8 Hyprland nested on Weston 16 (observed; aquamarine clamp patch applied) --------
++ls -l /dev/dri >"$OUT/dev-dri.txt" 2>&1
++if [ -S "$XDG_RUNTIME_DIR/bunos-gl" ]; then
++  WAYLAND_DISPLAY=bunos-gl timeout 25 Hyprland --config /etc/wslg/hyprland-nested.lua >"$OUT/hyprland-nested.stdout" 2>&1
++  hrc=$?
++  cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-nested.log" 2>/dev/null
++  # 124 = still running when timeout fired: the compositor started and stayed up.
++  if [ $hrc -eq 124 ]; then
++    rec hyprland-nested-on-weston16 pass "Hyprland ran 25 s against host bunos-gl"
++  else
++    rec hyprland-nested-on-weston16 fail "rc=$hrc: $(grep -h -m2 -i 'cannot\|fail\|error\|missing\|invalid' "$OUT/hyprland-nested.stdout" "$OUT/hyprland-nested.log" 2>/dev/null | head -2 | tr '\n' ' ')"
++  fi
++else
++  rec hyprland-nested-on-weston16 skipped "weston GL host did not start"
++fi
++kill "$GPID" 2>/dev/null
++
++# ---- P9 Hyprland headless (needs a DRM render node) ------------------------------------
++if ls /dev/dri/renderD* >/dev/null 2>&1; then
++  (
++    unset WAYLAND_DISPLAY
++    timeout 25 Hyprland --config /etc/wslg/hyprland-headless.lua >"$OUT/hyprland-headless.stdout" 2>&1
++  ) &
++  HP=$!
++  PIDS+=("$HP")
++  ok=0
++  sig=""
++  for i in $(seq 1 100); do
++    sig=$(ls "$XDG_RUNTIME_DIR/hypr" 2>/dev/null | head -1)
++    if [ -n "$sig" ] && HYPRLAND_INSTANCE_SIGNATURE=$sig hyprctl version >"$OUT/hyprctl-version.txt" 2>&1; then
++      ok=1
++      break
++    fi
++    sleep 0.2
++  done
++  if [ $ok -eq 1 ]; then
++    export HYPRLAND_INSTANCE_SIGNATURE=$sig
++    hyprctl monitors >"$OUT/hyprctl-monitors.txt" 2>&1
++    sock=$(ls "$XDG_RUNTIME_DIR" | grep -m1 '^wayland-[0-9]*$')
++    globals_of "$sock" wayland-info-hyprland
++    wlr-randr >"$OUT/wlr-randr.txt" 2>&1
++    python3 "$HERE/compat.py" checklist "$OUT/wayland-info-hyprland.json" "$HERE/checklist.json" >"$OUT/checklist-hyprland.tsv"
++    rec hyprland-headless pass "hyprctl answered: $(head -1 "$OUT/hyprctl-version.txt"); wlr-randr output $(grep -c . "$OUT/wlr-randr.txt") lines"
++  else
++    rec hyprland-headless fail "no hyprctl answer in 20 s; $(grep -h -m2 -i 'cannot\|fail\|critical' "$OUT/hyprland-headless.stdout" | head -2 | tr '\n' ' ')"
++  fi
++else
++  rec hyprland-headless skipped "no /dev/dri/renderD* in this container (aquamarine needs a DRM render node for its GBM allocator)"
++fi
++
++echo "---- report ----" >&2
++cat "$REPORT" >&2
++fails=$(awk -F'\t' '$2=="fail"' "$REPORT" | wc -l)
++# Probe failures are findings, not harness errors: exit non-zero only if the harness itself broke.
++[ -s "$REPORT" ] || exit 2
++exit 0
+diff --git a/bunos/versions.env b/bunos/versions.env
+new file mode 100644
+index 0000000..f7d6ceb
+--- /dev/null
++++ b/bunos/versions.env
+@@ -0,0 +1,27 @@
++# BunOS pins. Verified 2026-10-29 with git ls-remote / gh api (peeled tag SHA where annotated).
++# Consumed by Dockerfile (--build-arg) and bunos/check-versions.sh; update in one place.
++WESTON_TAG=16.0.2
++WESTON_SHA=530ae6c769d2fd55ea5157542654810be81a3193
++XWAYLAND_TAG=xwayland-24.1.14
++XWAYLAND_SHA=d958b4e84c903e8d5851b5ea587b998e4834ce62
++HYPRLAND_TAG=v0.57.0
++HYPRLAND_SHA=0aa6745f705f2c4b0a5004eb019ef76e5bbdb426
++AQUAMARINE_TAG=v0.15.1
++AQUAMARINE_SHA=f31c47a1b9d300847d8fc3108ad959448103dfc1
++HYPRUTILS_TAG=v0.14.3
++HYPRUTILS_SHA=0d13d5a624eb093b600d1b2cbe448fb613c86424
++HYPRLANG_TAG=v0.6.8
++HYPRLANG_SHA=3a1c1b25b059dae2c6bbc46991562ba1158d125c
++HYPRCURSOR_TAG=v0.1.13
++HYPRCURSOR_SHA=44e91d467bdad8dcf8bbd2ac7cf49972540980a5
++HYPRGRAPHICS_TAG=v0.5.1
++HYPRGRAPHICS_SHA=482d4b7ec36ffdaf3573086aa586b178fd5404be
++HYPRWAYLAND_SCANNER_TAG=v0.4.6
++HYPRWAYLAND_SCANNER_SHA=b8632713a6beaf28b56f2a7b0ab2fb7088dbb404
++HYPRLAND_PROTOCOLS_TAG=v0.8.0
++HYPRLAND_PROTOCOLS_SHA=044a434ec371f985655389bcef09286b1af3d77c
++# Reference only (not built here): newest releases seen on the same date.
++FREERDP_LATEST=3.32.2
++MESA_LATEST=mesa-26.2.6
++WAYLAND_PROTOCOLS_LATEST=1.49
++WAYLAND_LATEST=1.26.0

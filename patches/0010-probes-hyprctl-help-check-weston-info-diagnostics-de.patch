@@ -1,0 +1,54 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 06:04:55 +0100
+Subject: [PATCH 10/13] probes: hyprctl --help check, weston-info diagnostics,
+ delete RDP test key; ci: make vgem nodes accessible in the container
+
+---
+ .github/workflows/bunos-wslg.yml | 1 +
+ bunos/probes/run-probes.sh       | 7 +++++--
+ 2 files changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/.github/workflows/bunos-wslg.yml b/.github/workflows/bunos-wslg.yml
+index 542e8b0..88f92c7 100644
+--- a/.github/workflows/bunos-wslg.yml
++++ b/.github/workflows/bunos-wslg.yml
+@@ -65,6 +65,7 @@ jobs:
+       - name: Try to create a DRM render node (vgem) on the runner
+         run: |
+           sudo modprobe vgem 2>&1 || echo "vgem module not available on this kernel"
++          sudo chmod 666 /dev/dri/* 2>/dev/null || true
+           ls -l /dev/dri 2>&1 || echo "no /dev/dri"
+       - name: Run probes
+         run: |
+diff --git a/bunos/probes/run-probes.sh b/bunos/probes/run-probes.sh
+index 9810a08..088c2e4 100644
+--- a/bunos/probes/run-probes.sh
++++ b/bunos/probes/run-probes.sh
+@@ -54,10 +54,12 @@ if wait_socket bunos-pixman 20; then
+   globals_of bunos-pixman wayland-info-weston16-pixman
+   n=$(python3 -c "import json;print(len(json.load(open('$OUT/wayland-info-weston16-pixman.json'))))")
+   if [ "$n" -gt 5 ]; then rec weston16-headless-pixman pass "$n globals"; else rec weston16-headless-pixman fail "only $n globals"; fi
++  command -v weston-info >"$OUT/weston-info-path.txt" 2>&1 || ls /usr/local/bin | grep -i info >>"$OUT/weston-info-path.txt"
+   if WAYLAND_DISPLAY=bunos-pixman timeout 10 weston-info >"$OUT/weston-info.txt" 2>&1 && [ -s "$OUT/weston-info.txt" ]; then
+     rec weston-info pass "$(grep -c 'interface:' "$OUT/weston-info.txt") interface lines"
+   else
+-    rec weston-info fail "weston-info failed or empty"
++    rec weston-info fail "weston-info failed or empty: $(head -c 200 "$OUT/weston-info.txt" 2>/dev/null) path=$(tr "
++" " " <"$OUT/weston-info-path.txt")"
+   fi
+ else
+   rec weston16-headless-pixman fail "socket never appeared; see weston-pixman.log"
+@@ -136,10 +138,11 @@ else
+   rec weston16-rdp-backend fail "port 33890 closed; $(grep -h -m1 -i 'error\|fail' "$OUT/weston-rdp.log" "$OUT/weston-rdp.stdout" 2>/dev/null | head -1)"
+ fi
+ kill "$RPID" 2>/dev/null
++rm -f "$OUT/rdp.key" "$OUT/rdp.crt"
+ 
+ # ---- P7 Hyprland binaries --------------------------------------------------------------
+ if out=$(Hyprland --version 2>&1) && [ -n "$out" ]; then rec hyprland-binary pass "$(echo "$out" | head -1)"; else rec hyprland-binary fail "Hyprland --version failed"; fi
+-if hyprctl --version >/dev/null 2>&1; then rec hyprctl-binary pass "$(hyprctl --version 2>&1 | head -1)"; else rec hyprctl-binary fail "hyprctl --version failed"; fi
++if command -v hyprctl >/dev/null && hyprctl --help >"$OUT/hyprctl-help.txt" 2>&1 && grep -qi "usage" "$OUT/hyprctl-help.txt"; then rec hyprctl-binary pass "$(command -v hyprctl); help printed"; else rec hyprctl-binary fail "hyprctl missing or no usage text: $(head -c 150 "$OUT/hyprctl-help.txt" 2>/dev/null)"; fi
+ 
+ # ---- P8 Hyprland nested on Weston 16 (observed; aquamarine clamp patch applied) --------
+ ls -l /dev/dri >"$OUT/dev-dri.txt" 2>&1

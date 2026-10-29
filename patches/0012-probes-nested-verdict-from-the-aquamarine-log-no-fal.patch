@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: aphrody-dev <contact@aphrody.com>
+Date: Thu, 29 Oct 2026 06:39:35 +0100
+Subject: [PATCH 12/13] probes: nested verdict from the aquamarine log (no
+ false pass), GL compat tables, libseat noop for headless, keep Hyprland logs,
+ drop weston-info
+
+---
+ .github/workflows/bunos-wslg.yml |  2 +-
+ bunos/probes/run-probes.sh       | 31 +++++++++++++++++++------------
+ 2 files changed, 20 insertions(+), 13 deletions(-)
+
+diff --git a/.github/workflows/bunos-wslg.yml b/.github/workflows/bunos-wslg.yml
+index 88f92c7..5f14356 100644
+--- a/.github/workflows/bunos-wslg.yml
++++ b/.github/workflows/bunos-wslg.yml
+@@ -87,7 +87,7 @@ jobs:
+             awk -F'\t' '{gsub(/\|/,"/",$3); printf "| %s | %s | %s |\n",$1,$2,$3}' out/report.tsv
+             echo
+             echo "### versions"; echo '```'; cat out/versions.txt; echo '```'
+-            for t in aquamarine-compat-weston16 checklist-weston16 checklist-hyprland; do
++            for t in aquamarine-compat-weston16 aquamarine-compat-weston16-gl checklist-weston16 checklist-weston16-gl checklist-hyprland; do
+               [ -f "out/$t.tsv" ] && { echo "### $t (name, wanted, offered, verdict)"; echo '```'; cat "out/$t.tsv"; echo '```'; }
+             done
+           } >> "$GITHUB_STEP_SUMMARY"
+diff --git a/bunos/probes/run-probes.sh b/bunos/probes/run-probes.sh
+index 088c2e4..be8643a 100644
+--- a/bunos/probes/run-probes.sh
++++ b/bunos/probes/run-probes.sh
+@@ -54,13 +54,7 @@ if wait_socket bunos-pixman 20; then
+   globals_of bunos-pixman wayland-info-weston16-pixman
+   n=$(python3 -c "import json;print(len(json.load(open('$OUT/wayland-info-weston16-pixman.json'))))")
+   if [ "$n" -gt 5 ]; then rec weston16-headless-pixman pass "$n globals"; else rec weston16-headless-pixman fail "only $n globals"; fi
+-  command -v weston-info >"$OUT/weston-info-path.txt" 2>&1 || ls /usr/local/bin | grep -i info >>"$OUT/weston-info-path.txt"
+-  if WAYLAND_DISPLAY=bunos-pixman timeout 10 weston-info >"$OUT/weston-info.txt" 2>&1 && [ -s "$OUT/weston-info.txt" ]; then
+-    rec weston-info pass "$(grep -c 'interface:' "$OUT/weston-info.txt") interface lines"
+-  else
+-    rec weston-info fail "weston-info failed or empty: $(head -c 200 "$OUT/weston-info.txt" 2>/dev/null) path=$(tr "
+-" " " <"$OUT/weston-info-path.txt")"
+-  fi
++  rec weston-info skipped "weston-info is not built by 16.0.2 (-Dtools=info installed nothing); wayland-info is the global lister"
+ else
+   rec weston16-headless-pixman fail "socket never appeared; see weston-pixman.log"
+ fi
+@@ -120,6 +114,8 @@ if wait_socket bunos-gl 20; then
+   globals_of bunos-gl wayland-info-weston16-gl
+   dv=$(python3 -c "import json;print(json.load(open('$OUT/wayland-info-weston16-gl.json')).get('zwp_linux_dmabuf_v1','-'))")
+   rec weston16-headless-gl pass "zwp_linux_dmabuf_v1 version $dv"
++  python3 "$HERE/compat.py" aquamarine "$OUT/wayland-info-weston16-gl.json" "$HERE/aquamarine-requirements.json" >"$OUT/aquamarine-compat-weston16-gl.tsv"
++  python3 "$HERE/compat.py" checklist "$OUT/wayland-info-weston16-gl.json" "$HERE/checklist.json" >"$OUT/checklist-weston16-gl.tsv"
+ else
+   rec weston16-headless-gl fail "$(grep -h -m1 -i 'error\|fail' "$OUT/weston-gl.log" "$OUT/weston-gl.stdout" 2>/dev/null | head -1)"
+ fi
+@@ -142,7 +138,7 @@ rm -f "$OUT/rdp.key" "$OUT/rdp.crt"
+ 
+ # ---- P7 Hyprland binaries --------------------------------------------------------------
+ if out=$(Hyprland --version 2>&1) && [ -n "$out" ]; then rec hyprland-binary pass "$(echo "$out" | head -1)"; else rec hyprland-binary fail "Hyprland --version failed"; fi
+-if command -v hyprctl >/dev/null && hyprctl --help >"$OUT/hyprctl-help.txt" 2>&1 && grep -qi "usage" "$OUT/hyprctl-help.txt"; then rec hyprctl-binary pass "$(command -v hyprctl); help printed"; else rec hyprctl-binary fail "hyprctl missing or no usage text: $(head -c 150 "$OUT/hyprctl-help.txt" 2>/dev/null)"; fi
++if command -v hyprctl >/dev/null && { hyprctl --help >"$OUT/hyprctl-help.txt" 2>&1; grep -qi "usage" "$OUT/hyprctl-help.txt"; }; then rec hyprctl-binary pass "$(command -v hyprctl); help printed"; else rec hyprctl-binary fail "hyprctl missing or no usage text: $(head -c 150 "$OUT/hyprctl-help.txt" 2>/dev/null)"; fi
+ 
+ # ---- P8 Hyprland nested on Weston 16 (observed; aquamarine clamp patch applied) --------
+ ls -l /dev/dri >"$OUT/dev-dri.txt" 2>&1
+@@ -150,21 +146,30 @@ if [ -S "$XDG_RUNTIME_DIR/bunos-gl" ]; then
+   WAYLAND_DISPLAY=bunos-gl timeout 25 Hyprland --config /etc/wslg/hyprland-nested.lua >"$OUT/hyprland-nested.stdout" 2>&1
+   hrc=$?
+   cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-nested.log" 2>/dev/null
+-  # 124 = still running when timeout fired: the compositor started and stayed up.
+-  if [ $hrc -eq 124 ]; then
+-    rec hyprland-nested-on-weston16 pass "Hyprland ran 25 s against host bunos-gl"
++  # Alive after the timeout is not enough: aquamarine falls back to its headless backend when the
++  # wayland backend cannot start, so look for the backend's own verdict in the log.
++  if grep -q "Wayland backend cannot start" "$OUT/hyprland-nested.log" 2>/dev/null; then
++    rec hyprland-nested-on-weston16 fail "wayland backend refused the host (rc=$hrc, Hyprland kept running on its headless fallback): $(grep -m1 -o 'Wayland backend cannot start[^"]*' "$OUT/hyprland-nested.log"); host lacks: $(awk -F'	' '$4!="ok" && $1!~/^#/ {printf "%s(%s<%s) ",$1,$3,$2}' "$OUT/aquamarine-compat-weston16-gl.tsv" 2>/dev/null)"
++  elif grep -q "invalid version for global" "$OUT/hyprland-nested.stdout" 2>/dev/null; then
++    rec hyprland-nested-on-weston16 fail "rc=$hrc: $(grep -m1 'invalid version' "$OUT/hyprland-nested.stdout")"
++  elif [ $hrc -eq 124 ]; then
++    rec hyprland-nested-on-weston16 pass "wayland backend started and Hyprland ran 25 s against host bunos-gl"
+   else
+-    rec hyprland-nested-on-weston16 fail "rc=$hrc: $(grep -h -m2 -i 'cannot\|fail\|error\|missing\|invalid' "$OUT/hyprland-nested.stdout" "$OUT/hyprland-nested.log" 2>/dev/null | head -2 | tr '\n' ' ')"
++    rec hyprland-nested-on-weston16 fail "rc=$hrc: $(grep -h -m2 -i 'cannot\|fail\|error' "$OUT/hyprland-nested.stdout" "$OUT/hyprland-nested.log" 2>/dev/null | head -2 | tr '
++' ' ')"
+   fi
+ else
+   rec hyprland-nested-on-weston16 skipped "weston GL host did not start"
+ fi
+ kill "$GPID" 2>/dev/null
+ 
++cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-nested-after.log" 2>/dev/null
++rm -rf "$XDG_RUNTIME_DIR"/hypr
+ # ---- P9 Hyprland headless (needs a DRM render node) ------------------------------------
+ if ls /dev/dri/renderD* >/dev/null 2>&1; then
+   (
+     unset WAYLAND_DISPLAY
++    export LIBSEAT_BACKEND=noop
+     timeout 25 Hyprland --config /etc/wslg/hyprland-headless.lua >"$OUT/hyprland-headless.stdout" 2>&1
+   ) &
+   HP=$!
+@@ -188,6 +193,8 @@ if ls /dev/dri/renderD* >/dev/null 2>&1; then
+     python3 "$HERE/compat.py" checklist "$OUT/wayland-info-hyprland.json" "$HERE/checklist.json" >"$OUT/checklist-hyprland.tsv"
+     rec hyprland-headless pass "hyprctl answered: $(head -1 "$OUT/hyprctl-version.txt"); wlr-randr output $(grep -c . "$OUT/wlr-randr.txt") lines"
+   else
++    cp "$XDG_RUNTIME_DIR"/hypr/*/hyprland.log "$OUT/hyprland-headless.log" 2>/dev/null
++    cp /home/probe/.cache/hyprland/hyprlandCrashReport*.txt "$OUT/" 2>/dev/null
+     rec hyprland-headless fail "no hyprctl answer in 20 s; $(grep -h -m2 -i 'cannot\|fail\|critical' "$OUT/hyprland-headless.stdout" | head -2 | tr '\n' ' ')"
+   fi
+ else

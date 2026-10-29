@@ -1,0 +1,13 @@
+0001-WSLGd-WSL2_COMPOSITOR-switch-weston-hyprland-nested-.patch
+0002-bunos-source-stack-Weston-16.0.2-Xwayland-24.1.14-Hy.patch
+0003-build-and-export.sh-BUILDER-docker-podman-and-PulseA.patch
+0004-ci-bunos-wslg-workflow-unit-test-source-stack-probes.patch
+0005-bunos-committed-Arch-dependency-lists-system-distro-.patch
+0006-bunos-call-deps-list.sh-through-bash-checkout-has-no.patch
+0007-bunos-libwayland-1.26.0-and-wayland-protocols-1.49-f.patch
+0008-bunos-hyprland-protocols-builds-with-cmake-Xwayland-.patch
+0009-bunos-build-hyprwire-v0.3.1-required-by-Hyprland-0.5.patch
+0010-probes-hyprctl-help-check-weston-info-diagnostics-de.patch
+0011-bunos-default-Xwayland-pin-is-the-newest-tag-that-co.patch
+0012-probes-nested-verdict-from-the-aquamarine-log-no-fal.patch
+0013-bunos-protocol-matrix-CI-probe-report-doc-generator-.patch
